@@ -1,0 +1,10 @@
+{
+  "id": "CG-07",
+  "location": "Vaga B3",
+  "max_kw": 22.0,
+  "status": "OCUPADO",
+  "allocated_kw": 7.92,
+  "vehicle_id": "HIJ-7G77",
+  "duration_min": 0.0,
+  "energy_kwh": 0.0
+}

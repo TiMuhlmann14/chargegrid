@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChargeGrid — {{ charger.id }}</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://unpkg.com/htmx.org@1.9.12"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="cliente-screen" data-charger-id="{{ charger.id }}" data-max-kw="{{ charger.max_kw }}" data-tariff="{{ tariff }}">
+
+  <main class="cliente-card">
+    <div class="cliente-brand">⚡ ChargeGrid</div>
+    <h1><span class="vaga">{{ charger.location }}</span> · <span class="mono">{{ charger.id }}</span></h1>
+
+    <div class="ring-wrap">
+      {% set r = 90 %}
+      {% set c = 2 * 3.14159265 * r %}
+      {% set frac = (charger.allocated_kw / charger.max_kw) if charger.max_kw else 0 %}
+      <svg id="energy-ring" viewBox="0 0 220 220" role="img" aria-label="Progresso de recarga">
+        <circle class="ring-track" cx="110" cy="110" r="{{ r }}"></circle>
+        <circle id="ring-fill" class="ring-fill" cx="110" cy="110" r="{{ r }}"
+                stroke-dasharray="{{ c }}"
+                stroke-dashoffset="{{ c * (1 - frac) }}"
+                transform="rotate(-90 110 110)"></circle>
+      </svg>
+      <div class="ring-center">
+        <span class="kw-value mono" id="ring-kw">{{ '%.2f'|format(charger.allocated_kw) }}</span>
+        <span class="kw-max mono" id="ring-kw-max">/ {{ '%.0f'|format(charger.max_kw) }} kW</span>
+      </div>
+    </div>
+
+    <div class="cliente-stats">
+      <div class="stat-row"><span class="label"><i data-lucide="zap" class="panel-icon" aria-hidden="true"></i>Energia</span><span class="val" id="stat-energy">{{ '%.3f'|format(charger.energy_kwh or 0) }} kWh</span></div>
+      <div class="stat-row"><span class="label"><i data-lucide="clock" class="panel-icon" aria-hidden="true"></i>Tempo</span><span class="val" id="stat-time">{{ '%02d:%02d:%02d'|format(((charger.duration_min or 0)*60)//3600, (((charger.duration_min or 0)*60)%3600)//60, ((charger.duration_min or 0)*60)%60) }}</span></div>
+      <div class="stat-row"><span class="label"><i data-lucide="circle-dollar-sign" class="panel-icon" aria-hidden="true"></i>Custo estimado</span><span class="val" id="stat-cost">{{ ((charger.energy_kwh or 0) * tariff)|brl }}</span></div>
+    </div>
+
+    <div class="cliente-status {{ 'ocupado' if charger.status == 'OCUPADO' else 'livre' }}" id="cliente-status">
+      {% if charger.status == 'OCUPADO' %}Recarga em andamento{% else %}Vaga livre · aguardando veículo{% endif %}
+    </div>
+  </main>
+
+  {% include "partials/chat_widget.html" %}
+
+  <script src="/static/app.js"></script>
+  <script>ChargeGrid.init({ page: "cliente", chargerId: "{{ charger.id }}" });</script>
+</body>
+</html>

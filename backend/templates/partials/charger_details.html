@@ -1,0 +1,68 @@
+<div data-charger-id="{{ c.id }}">
+  <button type="button" class="close-btn" aria-label="Fechar detalhes" onclick="ChargeGrid.closeDetails()">✕ fechar</button>
+  <strong class="mono">{{ c.id }}</strong> — {{ c.location }} · máx {{ '%.1f'|format(c.max_kw) }} kW
+
+  <div class="status-badges">
+    <span class="status-pill {{ 'ocupado' if c.status == 'OCUPADO' else 'livre' }}">{{ c.status }}</span>
+    {% if c.sim_flag == 'manutencao' %}
+    <span class="flag-badge manutencao">🔧 Manutenção (demo)</span>
+    {% elif c.sim_flag == 'erro' %}
+    <span class="flag-badge erro">⚠ Erro (demo)</span>
+    {% endif %}
+  </div>
+
+  <dl class="details-grid">
+    <dt>Veículo</dt>
+    <dd>{{ c.vehicle_id or '—' }}</dd>
+
+    <dt>kW alocado</dt>
+    <dd>{{ '%.2f'|format(c.allocated_kw) }} kW</dd>
+
+    <dt>Conectado há</dt>
+    <dd>{{ '%.1f'|format(c.duration_min) ~ ' min' if c.duration_min is not none else '—' }}</dd>
+
+    <dt>Energia consumida</dt>
+    <dd>{{ '%.3f'|format(c.energy_kwh) if c.energy_kwh is not none else '—' }} kWh</dd>
+
+    <dt>Custo estimado</dt>
+    <dd>{% if c.energy_kwh is not none %}{{ (c.energy_kwh * tariff)|brl }}{% else %}—{% endif %}</dd>
+  </dl>
+
+  <div style="margin-top:0.7rem;">
+    {% if c.status == 'OCUPADO' %}
+    <button type="button" hx-post="/disconnect" hx-vals='{"charger_id": "{{ c.id }}"}' hx-swap="none" onclick="setTimeout(ChargeGrid.closeDetails, 150)">Desconectar veículo</button>
+    {% else %}
+    <button type="button" class="primary" hx-post="/connect" hx-vals='{"charger_id": "{{ c.id }}"}' hx-swap="none" onclick="setTimeout(ChargeGrid.closeDetails, 150)">Conectar veículo de teste</button>
+    {% endif %}
+  </div>
+
+  <div class="demo-controls">
+    <div class="demo-controls-title">Controles de demo — não fazem parte do sistema real</div>
+
+    <div class="demo-row">
+      <span>Pagamento</span>
+      <span class="status-pill {{ 'livre' if c.payment_status == 'pago' else 'ocupado' }}">{{ 'Pago' if c.payment_status == 'pago' else 'Pendente' }}</span>
+      {% if c.payment_status == 'pago' %}
+      <button type="button" hx-post="/charger/{{ c.id }}/demo/payment" hx-vals='{"status":"pendente"}' hx-target="#details-panel" hx-swap="innerHTML">Marcar pendente</button>
+      {% else %}
+      <button type="button" class="primary" hx-post="/charger/{{ c.id }}/demo/payment" hx-vals='{"status":"pago"}' hx-target="#details-panel" hx-swap="innerHTML">Marcar pago</button>
+      {% endif %}
+    </div>
+
+    <div class="demo-row">
+      <span>Flag de simulação</span>
+      <div class="demo-flag-buttons">
+        <button type="button" class="{{ 'primary' if not c.sim_flag }}" hx-post="/charger/{{ c.id }}/demo/flag" hx-vals='{"flag":"none"}' hx-target="#details-panel" hx-swap="innerHTML">Nenhuma</button>
+        <button type="button" class="{{ 'primary' if c.sim_flag == 'manutencao' }}" hx-post="/charger/{{ c.id }}/demo/flag" hx-vals='{"flag":"manutencao"}' hx-target="#details-panel" hx-swap="innerHTML">Manutenção</button>
+        <button type="button" class="{{ 'primary' if c.sim_flag == 'erro' }}" hx-post="/charger/{{ c.id }}/demo/flag" hx-vals='{"flag":"erro"}' hx-target="#details-panel" hx-swap="innerHTML">Erro</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="charger-events">
+    <div class="charger-events-title">Eventos deste carregador</div>
+    <div hx-get="/charger/{{ c.id }}/events" hx-trigger="load" hx-swap="innerHTML">
+      <ul class="charger-events-list"><li class="empty">Carregando…</li></ul>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChargeGrid Intelligence — Dashboard de Gestão</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://unpkg.com/htmx.org@1.9.12"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="dashboard" hx-headers='{}'>
+
+  <header class="dash-header">
+    <div class="brand">
+      <h1>⚡ ChargeGrid Intelligence</h1>
+      <span class="site">{{ state.site }}</span>
+    </div>
+    <div class="clock mono" id="clock">{{ state.clock }}</div>
+    <div class="sim-controls" role="group" aria-label="Controles de simulação">
+      <button type="button" data-scenario="vazio" hx-post="/simulate/vazio" hx-swap="none">Vazio</button>
+      <button type="button" data-scenario="chegada" hx-post="/simulate/chegada" hx-swap="none">Chegada gradual</button>
+      <button type="button" class="primary" data-scenario="pico" hx-post="/simulate/pico" hx-swap="none">Pico (12 carros)</button>
+      <button type="button" data-scenario="alivio" hx-post="/simulate/alivio" hx-swap="none">Alívio</button>
+    </div>
+  </header>
+
+  <section class="panel unifilar-panel">
+    <div class="unifilar-summary level-{{ state.utilization_level }}" id="unifilar-summary">
+      <span class="label"><i data-lucide="zap" class="panel-icon" aria-hidden="true"></i>Barramento</span>
+      <div class="unifilar-hero">
+        <span class="pct-hero mono" id="bus-pct">{{ '%.1f'|format(state.utilization_pct) }}%</span>
+        <div class="kw-detail">
+          <span class="num" id="bus-allocated">{{ '%.1f'|format(state.total_allocated_kw) }}</span>
+          <span class="num">/ {{ '%.1f'|format(state.usable_limit_kw) }} kW</span>
+          <span class="contracted-note">de {{ '%.0f'|format(state.contracted_limit_kw) }} kW contratados</span>
+        </div>
+        <span id="bus-level-badge" class="level-badge {{ 'hidden' if state.utilization_level == 'ok' else '' }}">
+          {% if state.utilization_level == 'critical' %}⚠ acima do limite contratado{% elif state.utilization_level == 'warning' %}⚠ utilização ≥ 90%{% endif %}
+        </span>
+      </div>
+    </div>
+
+    {#
+      Diagrama unifilar em 2 fileiras de 6 (em vez de 1 fileira de 12):
+      um riser central desce do barramento e alimenta duas sub-réguas
+      (rails), cada uma com 6 ramificações — mesma linguagem visual de
+      "unifilar", só que com painéis em dois níveis.
+    #}
+    {% set track_x = 40 %}
+    {% set track_w = 1080 %}
+    {% set cols = 6 %}
+    {% set rail_y = [90, 210] %}
+    {% set node_dy = 38 %}
+    {% set n = state.chargers|length %}
+    {% set rows = ((n + cols - 1) // cols) %}
+    {% set step = (track_w - 40) / (cols - 1) if cols > 1 else 0 %}
+    <svg id="unifilar" viewBox="0 0 1160 330" role="img" aria-label="Diagrama unifilar da rede de carregadores">
+      <rect class="bus-track" x="{{ track_x }}" y="34" width="{{ track_w }}" height="18" rx="9"></rect>
+      <rect id="bus-fill" class="bus-fill level-{{ state.utilization_level }}" x="{{ track_x }}" y="34" width="{{ track_w * (state.utilization_pct/100) }}" height="18" rx="9"></rect>
+      <line class="bus-safety-marker" x1="{{ track_x + track_w * 0.95 }}" y1="28" x2="{{ track_x + track_w * 0.95 }}" y2="58"></line>
+
+      <line class="riser" x1="580" y1="52" x2="580" y2="{{ rail_y[rows - 1] }}"></line>
+      {% for ry in rail_y[:rows] %}
+      <line class="rail" x1="{{ track_x }}" y1="{{ ry }}" x2="{{ track_x + track_w }}" y2="{{ ry }}"></line>
+      {% endfor %}
+
+      {% for c in state.chargers %}
+      {% set row = loop.index0 // cols %}
+      {% set col = loop.index0 % cols %}
+      {% set x = track_x + 20 + step * col %}
+      {% set ry = rail_y[row] %}
+      {% set cy = ry + node_dy %}
+      {% set node_class = 'fault pulse' if c.sim_flag == 'erro' else ('maintenance' if c.sim_flag == 'manutencao' else ('occupied pulse' if c.status == 'OCUPADO' else 'free')) %}
+      <line id="branch-{{ c.id }}" class="branch{{ ' energized' if c.status == 'OCUPADO' else '' }}" x1="{{ x }}" y1="{{ ry }}" x2="{{ x }}" y2="{{ ry + 23 }}"></line>
+      <circle id="node-{{ c.id }}" class="node {{ node_class }}"
+              cx="{{ x }}" cy="{{ cy }}" r="15"
+              tabindex="0" role="button"
+              aria-label="{{ c.id }} — {{ c.location }} — {{ c.status }}{{ ' — MANUTENÇÃO' if c.sim_flag == 'manutencao' else (' — ERRO' if c.sim_flag == 'erro' else '') }}"
+              onclick="ChargeGrid.showDetails('{{ c.id }}')"
+              onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();ChargeGrid.showDetails('{{ c.id }}');}"></circle>
+      <text class="node-label" x="{{ x }}" y="{{ cy + 30 }}">{{ c.id }}</text>
+      <text id="node-kw-{{ c.id }}" class="node-kw" x="{{ x }}" y="{{ cy + 44 }}">{% if c.sim_flag == 'erro' %}ERRO{% elif c.sim_flag == 'manutencao' %}MANUT.{% else %}{{ '%.1f'|format(c.allocated_kw) }} kW{% endif %}</text>
+      {% endfor %}
+    </svg>
+  </section>
+
+  <section class="dash-grid">
+
+    <section class="panel" aria-labelledby="h-charregadores">
+      <h2 id="h-charregadores"><i data-lucide="plug-zap" class="panel-icon" aria-hidden="true"></i>Carregadores</h2>
+      <table class="charger-table">
+        <thead>
+          <tr><th>ID</th><th>Status</th><th>Veículo</th><th>kW alocado</th></tr>
+        </thead>
+        <tbody id="charger-tbody">
+          {% for c in state.chargers %}
+          <tr class="charger-row" id="row-{{ c.id }}" tabindex="0" role="button"
+              aria-label="Ver detalhes de {{ c.id }}"
+              onclick="ChargeGrid.showDetails('{{ c.id }}')"
+              onkeydown="if(event.key==='Enter'){ChargeGrid.showDetails('{{ c.id }}');}">
+            <td class="mono">{{ c.id }}</td>
+            <td>
+              <span id="pill-{{ c.id }}" class="status-pill {{ 'ocupado' if c.status == 'OCUPADO' else 'livre' }}">{{ c.status }}</span>
+              <span id="flag-{{ c.id }}" class="flag-badge {{ c.sim_flag }}{{ ' hidden' if not c.sim_flag else '' }}">{% if c.sim_flag == 'manutencao' %}🔧 Manutenção{% elif c.sim_flag == 'erro' %}⚠ Erro{% endif %}</span>
+            </td>
+            <td class="mono" id="vehicle-{{ c.id }}">{{ c.vehicle_id or '—' }}</td>
+            <td class="mono" id="kw-{{ c.id }}">{{ '%.2f'|format(c.allocated_kw) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel" aria-labelledby="h-faturamento">
+      <h2 id="h-faturamento"><i data-lucide="circle-dollar-sign" class="panel-icon" aria-hidden="true"></i>Faturamento</h2>
+      <div class="billing-tariff mono">{{ state.billing.tariff_rs_per_kwh|brl }} <small>/ kWh</small></div>
+      <div class="billing-row"><span>Energia hoje</span><span class="val" id="billing-kwh">{{ '%.3f'|format(state.billing.kwh_today) }} kWh</span></div>
+      <div class="billing-row"><span>Receita acumulada</span><span class="val" id="billing-revenue">{{ state.billing.revenue_today_rs|brl }}</span></div>
+      <div class="billing-row"><span>Sessões hoje</span><span class="val" id="billing-sessions">{{ state.billing.sessions_today }}</span></div>
+      <div class="billing-row"><span>Ticket médio</span><span class="val" id="billing-avg-ticket">{{ state.billing.avg_ticket_rs|brl if state.billing.avg_ticket_rs is not none else '—' }}</span></div>
+      <div class="billing-row"><span>Duração média da sessão</span><span class="val" id="billing-avg-duration">{{ '%.1f'|format(state.billing.avg_duration_min) ~ ' min' if state.billing.avg_duration_min is not none else '—' }}</span></div>
+      <div class="billing-note">médias sobre <span id="billing-completed-count">{{ state.billing.completed_sessions_count }}</span> sessão(ões) já concluída(s)</div>
+
+      <svg id="profit-curve" viewBox="0 0 {{ state.billing.curve_svg.width }} {{ state.billing.curve_svg.height }}" role="img" aria-label="Curva de lucro L(p)">
+        <defs>
+          <linearGradient id="profit-gradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" class="profit-gradient-start"></stop>
+            <stop offset="100%" class="profit-gradient-end"></stop>
+          </linearGradient>
+        </defs>
+        <path class="profit-area" d="{{ state.billing.curve_svg.area_path }}" fill="url(#profit-gradient)" stroke="none"></path>
+        <line class="profit-baseline" x1="0" y1="{{ state.billing.curve_svg.baseline_y }}" x2="{{ state.billing.curve_svg.width }}" y2="{{ state.billing.curve_svg.baseline_y }}"></line>
+        <path class="profit-line" d="{{ state.billing.curve_svg.path }}"></path>
+        <circle class="profit-marker" cx="{{ state.billing.curve_svg.marker_x }}" cy="{{ state.billing.curve_svg.marker_y }}" r="3.5"></circle>
+      </svg>
+      <div class="profit-caption">L(p) = -35p² + 298,5p - 406 · ótimo em p = {{ state.billing.optimal_p|brl }} → L ≈ {{ state.billing.optimal_profit_rs|brl }}/dia</div>
+    </section>
+
+  </section>
+
+  <section class="events-console" id="events-console" aria-label="Console de eventos em tempo real" aria-live="polite">
+    <div class="title"><i data-lucide="terminal" class="panel-icon" aria-hidden="true"></i>console · eventos em tempo real</div>
+    <ul id="events-list">
+      {% for e in state.events %}
+      <li class="type-{{ e.type }}"><span class="ts">[{{ e.timestamp }}]</span> {{ e.type }} · {{ e.source }} — {{ e.message }}</li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <div id="details-backdrop" class="details-backdrop" onclick="ChargeGrid.closeDetails()"></div>
+  <aside id="details-panel" class="details-panel details-drawer" role="dialog" aria-modal="true" aria-label="Detalhes do carregador"></aside>
+
+  {% include "partials/chat_widget.html" %}
+
+  <script src="/static/app.js"></script>
+  <script>ChargeGrid.init({ page: "dashboard" });</script>
+</body>
+</html>

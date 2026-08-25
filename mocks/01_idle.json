@@ -1,0 +1,163 @@
+{
+  "site": "Shopping Paulista — Estacionamento",
+  "contracted_limit_kw": 100.0,
+  "usable_limit_kw": 95.0,
+  "total_allocated_kw": 0,
+  "available_kw": 95.0,
+  "utilization_pct": 0.0,
+  "active_sessions": 0,
+  "chargers": [
+    {
+      "id": "CG-01",
+      "location": "Vaga A1",
+      "max_kw": 22.0,
+      "status": "LIVRE",
+      "allocated_kw": 0.0,
+      "vehicle_id": null,
+      "duration_min": null,
+      "energy_kwh": null
+    },
+    {
+      "id": "CG-02",
+      "location": "Vaga A2",
+      "max_kw": 22.0,
+      "status": "LIVRE",
+      "allocated_kw": 0.0,
+      "vehicle_id": null,
+      "duration_min": null,
+      "energy_kwh": null
+    },
+    {
+      "id": "CG-03",
+      "location": "Vaga A3",
+      "max_kw": 22.0,
+      "status": "LIVRE",
+      "allocated_kw": 0.0,
+      "vehicle_id": null,
+      "duration_min": null,
+      "energy_kwh": null
+    },
+    {
+      "id": "CG-04",
+      "location": "Vaga A4",
+      "max_kw": 22.0,
+      "status": "LIVRE",
+      "allocated_kw": 0.0,
+      "vehicle_id": null,
+      "duration_min": null,
+      "energy_kwh": null
+    },
+    {
+      "id": "CG-05",
+      "location": "Vaga B1",
+      "max_kw": 22.0,
+      "status": "LIVRE",
+      "allocated_kw": 0.0,
+      "vehicle_id": null,
+      "duration_min": null,
+      "energy_kwh": null
+    },
+    {
+      "id": "CG-06",
+      "location": "Vaga B2",
+      "max_kw": 22.0,
+      "status": "LIVRE",
+      "allocated_kw": 0.0,
+      "vehicle_id": null,
+      "duration_min": null,
+      "energy_kwh": null
+    },
+    {
+      "id": "CG-07",
+      "location": "Vaga B3",
+      "max_kw": 22.0,
+      "status": "LIVRE",
+      "allocated_kw": 0.0,
+      "vehicle_id": null,
+      "duration_min": null,
+      "energy_kwh": null
+    },
+    {
+      "id": "CG-08",
+      "location": "Vaga B4",
+      "max_kw": 22.0,
+      "status": "LIVRE",
+      "allocated_kw": 0.0,
+      "vehicle_id": null,
+      "duration_min": null,
+      "energy_kwh": null
+    },
+    {
+      "id": "CG-09",
+      "location": "Vaga C1",
+      "max_kw": 22.0,
+      "status": "LIVRE",
+      "allocated_kw": 0.0,
+      "vehicle_id": null,
+      "duration_min": null,
+      "energy_kwh": null
+    },
+    {
+      "id": "CG-10",
+      "location": "Vaga C2",
+      "max_kw": 22.0,
+      "status": "LIVRE",
+      "allocated_kw": 0.0,
+      "vehicle_id": null,
+      "duration_min": null,
+      "energy_kwh": null
+    },
+    {
+      "id": "CG-11",
+      "location": "Vaga C3",
+      "max_kw": 22.0,
+      "status": "LIVRE",
+      "allocated_kw": 0.0,
+      "vehicle_id": null,
+      "duration_min": null,
+      "energy_kwh": null
+    },
+    {
+      "id": "CG-12",
+      "location": "Vaga C4",
+      "max_kw": 22.0,
+      "status": "LIVRE",
+      "allocated_kw": 0.0,
+      "vehicle_id": null,
+      "duration_min": null,
+      "energy_kwh": null
+    }
+  ],
+  "events": [
+    {
+      "timestamp": "01:02:18",
+      "type": "CHARGER_REGISTERED",
+      "source": "CG-08",
+      "message": "Registrado em 'Vaga B4' | Máx: 22.0 kW"
+    },
+    {
+      "timestamp": "01:02:18",
+      "type": "CHARGER_REGISTERED",
+      "source": "CG-09",
+      "message": "Registrado em 'Vaga C1' | Máx: 22.0 kW"
+    },
+    {
+      "timestamp": "01:02:18",
+      "type": "CHARGER_REGISTERED",
+      "source": "CG-10",
+      "message": "Registrado em 'Vaga C2' | Máx: 22.0 kW"
+    },
+    {
+      "timestamp": "01:02:18",
+      "type": "CHARGER_REGISTERED",
+      "source": "CG-11",
+      "message": "Registrado em 'Vaga C3' | Máx: 22.0 kW"
+    },
+    {
+      "timestamp": "01:02:18",
+      "type": "CHARGER_REGISTERED",
+      "source": "CG-12",
+      "message": "Registrado em 'Vaga C4' | Máx: 22.0 kW"
+    }
+  ]
+}

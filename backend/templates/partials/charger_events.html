@@ -1,0 +1,7 @@
+<ul class="charger-events-list">
+  {% for e in events %}
+  <li class="type-{{ e.type }}"><span class="ts">[{{ e.timestamp }}]</span> {{ e.type }} — {{ e.message }}</li>
+  {% else %}
+  <li class="empty">Nenhum evento registrado ainda para {{ charger_id }}.</li>
+  {% endfor %}
+</ul>

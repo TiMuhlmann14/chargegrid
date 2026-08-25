@@ -1,0 +1,67 @@
+{
+  "completed_sessions": [
+    {
+      "charger_id": "CG-01",
+      "vehicle_id": "ABC-1A11",
+      "started_at": "2026-08-20T01:02:19.032187",
+      "duration_min": 0.0,
+      "energy_kwh": 0.002
+    },
+    {
+      "charger_id": "CG-02",
+      "vehicle_id": "XYZ-2B22",
+      "started_at": "2026-08-20T01:02:19.042408",
+      "duration_min": 0.0,
+      "energy_kwh": 0.002
+    },
+    {
+      "charger_id": "CG-03",
+      "vehicle_id": "QRS-3C33",
+      "started_at": "2026-08-20T01:02:19.052617",
+      "duration_min": 0.0,
+      "energy_kwh": 0.003
+    },
+    {
+      "charger_id": "CG-04",
+      "vehicle_id": "LMN-4D44",
+      "started_at": "2026-08-20T01:02:19.062787",
+      "duration_min": 0.0,
+      "energy_kwh": 0.003
+    },
+    {
+      "charger_id": "CG-05",
+      "vehicle_id": "OPQ-5E55",
+      "started_at": "2026-08-20T01:02:19.072947",
+      "duration_min": 0.0,
+      "energy_kwh": 0.003
+    },
+    {
+      "charger_id": "CG-06",
+      "vehicle_id": "TUV-6F66",
+      "started_at": "2026-08-20T01:02:19.083106",
+      "duration_min": 0.0,
+      "energy_kwh": 0.004
+    },
+    {
+      "charger_id": "CG-07",
+      "vehicle_id": "HIJ-7G77",
+      "started_at": "2026-08-20T01:02:19.094176",
+      "duration_min": 0.0,
+      "energy_kwh": 0.004
+    },
+    {
+      "charger_id": "CG-08",
+      "vehicle_id": "KLM-8H88",
+      "started_at": "2026-08-20T01:02:19.104357",
+      "duration_min": 0.0,
+      "energy_kwh": 0.005
+    },
+    {
+      "charger_id": "CG-09",
+      "vehicle_id": "NOP-9I99",
+      "started_at": "2026-08-20T01:02:19.114583",
+      "duration_min": 0.0,
+      "energy_kwh": 0.006
+    }
+  ]
+}

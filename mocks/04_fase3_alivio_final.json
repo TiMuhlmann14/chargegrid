@@ -1,0 +1,163 @@
+{
+  "site": "Shopping Paulista — Estacionamento",
+  "contracted_limit_kw": 100.0,
+  "usable_limit_kw": 95.0,
+  "total_allocated_kw": 66.0,
+  "available_kw": 29.0,
+  "utilization_pct": 66.0,
+  "active_sessions": 3,
+  "chargers": [
+    {
+      "id": "CG-01",
+      "location": "Vaga A1",
+      "max_kw": 22.0,
+      "status": "LIVRE",
+      "allocated_kw": 0.0,
+      "vehicle_id": null,
+      "duration_min": null,
+      "energy_kwh": null
+    },
+    {
+      "id": "CG-02",
+      "location": "Vaga A2",
+      "max_kw": 22.0,
+      "status": "LIVRE",
+      "allocated_kw": 0.0,
+      "vehicle_id": null,
+      "duration_min": null,
+      "energy_kwh": null
+    },
+    {
+      "id": "CG-03",
+      "location": "Vaga A3",
+      "max_kw": 22.0,
+      "status": "LIVRE",
+      "allocated_kw": 0.0,
+      "vehicle_id": null,
+      "duration_min": null,
+      "energy_kwh": null
+    },
+    {
+      "id": "CG-04",
+      "location": "Vaga A4",
+      "max_kw": 22.0,
+      "status": "LIVRE",
+      "allocated_kw": 0.0,
+      "vehicle_id": null,
+      "duration_min": null,
+      "energy_kwh": null
+    },
+    {
+      "id": "CG-05",
+      "location": "Vaga B1",
+      "max_kw": 22.0,
+      "status": "LIVRE",
+      "allocated_kw": 0.0,
+      "vehicle_id": null,
+      "duration_min": null,
+      "energy_kwh": null
+    },
+    {
+      "id": "CG-06",
+      "location": "Vaga B2",
+      "max_kw": 22.0,
+      "status": "LIVRE",
+      "allocated_kw": 0.0,
+      "vehicle_id": null,
+      "duration_min": null,
+      "energy_kwh": null
+    },
+    {
+      "id": "CG-07",
+      "location": "Vaga B3",
+      "max_kw": 22.0,
+      "status": "LIVRE",
+      "allocated_kw": 0.0,
+      "vehicle_id": null,
+      "duration_min": null,
+      "energy_kwh": null
+    },
+    {
+      "id": "CG-08",
+      "location": "Vaga B4",
+      "max_kw": 22.0,
+      "status": "LIVRE",
+      "allocated_kw": 0.0,
+      "vehicle_id": null,
+      "duration_min": null,
+      "energy_kwh": null
+    },
+    {
+      "id": "CG-09",
+      "location": "Vaga C1",
+      "max_kw": 22.0,
+      "status": "LIVRE",
+      "allocated_kw": 0.0,
+      "vehicle_id": null,
+      "duration_min": null,
+      "energy_kwh": null
+    },
+    {
+      "id": "CG-10",
+      "location": "Vaga C2",
+      "max_kw": 22.0,
+      "status": "OCUPADO",
+      "allocated_kw": 22.0,
+      "vehicle_id": "STU-0J00",
+      "duration_min": 0.0,
+      "energy_kwh": 0.0
+    },
+    {
+      "id": "CG-11",
+      "location": "Vaga C3",
+      "max_kw": 22.0,
+      "status": "OCUPADO",
+      "allocated_kw": 22.0,
+      "vehicle_id": "VWX-1K11",
+      "duration_min": 0.0,
+      "energy_kwh": 0.0
+    },
+    {
+      "id": "CG-12",
+      "location": "Vaga C4",
+      "max_kw": 22.0,
+      "status": "OCUPADO",
+      "allocated_kw": 22.0,
+      "vehicle_id": "YZA-2L22",
+      "duration_min": 0.0,
+      "energy_kwh": 0.0
+    }
+  ],
+  "events": [
+    {
+      "timestamp": "01:02:19",
+      "type": "POWER_REDISTRIBUTED",
+      "source": "SYSTEM",
+      "message": "5 carregador(es) ativo(s) | Total alocado: 95.0 kW / 95.0 kW disponíveis"
+    },
+    {
+      "timestamp": "01:02:19",
+      "type": "VEHICLE_DISCONNECTED",
+      "source": "CG-08",
+      "message": "Veículo KLM-8H88 desconectado | 0.005 kWh consumidos | 0.0 min"
+    },
+    {
+      "timestamp": "01:02:19",
+      "type": "POWER_REDISTRIBUTED",
+      "source": "SYSTEM",
+      "message": "4 carregador(es) ativo(s) | Total alocado: 88.0 kW / 95.0 kW disponíveis"
+    },
+    {
+      "timestamp": "01:02:19",
+      "type": "VEHICLE_DISCONNECTED",
+      "source": "CG-09",
+      "message": "Veículo NOP-9I99 desconectado | 0.006 kWh consumidos | 0.0 min"
+    },
+    {
+      "timestamp": "01:02:19",
+      "type": "POWER_REDISTRIBUTED",
+      "source": "SYSTEM",
+      "message": "3 carregador(es) ativo(s) | Total alocado: 66.0 kW / 95.0 kW disponíveis"
+    }
+  ]
+}

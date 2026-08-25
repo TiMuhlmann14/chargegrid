@@ -1,0 +1,24 @@
+<div id="chat-widget" class="chat-widget">
+  <button type="button" id="chat-fab" class="chat-fab" aria-expanded="false" aria-controls="chat-panel">
+    <i data-lucide="message-circle" aria-hidden="true"></i>
+    <span class="hidden">Abrir assistente IA</span>
+  </button>
+
+  <div id="chat-panel" class="chat-panel" role="dialog" aria-label="Assistente IA">
+    <div class="chat-panel-header">
+      <span><i data-lucide="bot" class="panel-icon" aria-hidden="true"></i>Assistente IA</span>
+      <button type="button" id="chat-close" class="close-btn" aria-label="Fechar assistente">✕</button>
+    </div>
+
+    <div class="chat-log" id="chat-log" aria-live="polite">
+      <div class="chat-msg assistant">Olá! Escolha uma das opções abaixo. (A integração com uma IA de verdade fica para uma fase futura — por enquanto são respostas pré-definidas.)</div>
+    </div>
+
+    <div class="chat-menu">
+      <button type="button" hx-post="/chat" hx-vals='{"message":"Faturamento de hoje"}' hx-target="#chat-log" hx-swap="beforeend" hx-on::after-request="document.getElementById('chat-log').scrollTop = 999999;">1. Faturamento de hoje</button>
+      <button type="button" hx-post="/chat" hx-vals='{"message":"Energia por carregador"}' hx-target="#chat-log" hx-swap="beforeend" hx-on::after-request="document.getElementById('chat-log').scrollTop = 999999;">2. Energia por carregador</button>
+      <button type="button" hx-post="/chat" hx-vals='{"message":"Carregadores livres agora"}' hx-target="#chat-log" hx-swap="beforeend" hx-on::after-request="document.getElementById('chat-log').scrollTop = 999999;">3. Carregadores livres agora</button>
+      <button type="button" hx-post="/chat" hx-vals='{"message":"Sessões ativas"}' hx-target="#chat-log" hx-swap="beforeend" hx-on::after-request="document.getElementById('chat-log').scrollTop = 999999;">4. Sessões ativas</button>
+    </div>
+  </div>
+</div>
