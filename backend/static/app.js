@@ -269,6 +269,16 @@
     const occupied = c.status === "OCUPADO";
     const maxKw = parseFloat(document.body.dataset.maxKw) || c.max_kw || 1;
     const tariff = parseFloat(document.body.dataset.tariff) || 4.26;
+    const targetKwh = parseFloat(document.body.dataset.targetKwh);
+
+    // Tela autenticada de "carregando" (data-target-kwh presente): se a vaga
+    // deixou de estar ocupada (ex.: operador forçou parada pelo Dashboard),
+    // não há mais nada pra mostrar aqui — volta pro servidor, que decide
+    // pra onde mandar o cliente (home).
+    if (!Number.isNaN(targetKwh) && !occupied) {
+      location.href = "/cliente/carregando";
+      return;
+    }
 
     const frac = maxKw ? Math.min(1, c.allocated_kw / maxKw) : 0;
     const ring = $("ring-fill");
@@ -281,10 +291,20 @@
     if ($("stat-time")) $("stat-time").textContent = formatHMS(c.duration_min || 0);
     animateNumberTo("stat-cost", energy * tariff, formatBRL);
 
+    if ($("stat-remaining")) {
+      const remainingKwh = Math.max(0, targetKwh - energy);
+      if (c.allocated_kw > 0) {
+        const remainingMin = (remainingKwh / c.allocated_kw) * 60;
+        $("stat-remaining").textContent = "~" + Math.round(remainingMin) + " min";
+      } else {
+        $("stat-remaining").textContent = "—";
+      }
+    }
+
     const statusEl = $("cliente-status");
     if (statusEl) {
       statusEl.className = "cliente-status " + (occupied ? "ocupado" : "livre");
-      statusEl.textContent = occupied ? "Recarga em andamento" : "Vaga livre · aguardando veículo";
+      statusEl.textContent = occupied ? (targetKwh ? "Carregando" : "Recarga em andamento") : "Vaga livre · aguardando veículo";
     }
   }
 

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChargeGrid — Meu perfil</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="cliente-screen">
+
+  <main class="cliente-card">
+    <div class="cliente-brand">⚡ ChargeGrid</div>
+    <h1>Meu perfil</h1>
+
+    <div class="summary-list">
+      <div class="row"><span>Nome</span><span class="val">{{ account.nome }}</span></div>
+      <div class="row"><span>CPF</span><span class="val">{{ account.cpf }}</span></div>
+      <div class="row"><span>E-mail</span><span class="val">{{ account.email }}</span></div>
+    </div>
+
+    <div class="link-row"><a href="/cliente/home">← Voltar</a></div>
+  </main>
+
+</body>
+</html>

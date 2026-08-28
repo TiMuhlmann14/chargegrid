@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChargeGrid — Recarga concluída</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="cliente-screen">
+
+  <main class="cliente-card">
+    <div class="cliente-brand">⚡ ChargeGrid</div>
+    <div class="receipt-icon">✅</div>
+    <h1>Recarga concluída</h1>
+    <p style="color:var(--ink-mid); font-size:0.85rem; margin-top:-1rem;">{{ site }}</p>
+
+    <div class="summary-list">
+      <div class="row"><span>Veículo</span><span class="val">{{ r.vehicle_id }}</span></div>
+      <div class="row"><span>Vaga</span><span class="val">{{ r.charger_id }} — {{ r.location }}</span></div>
+      <div class="row"><span>Energia total</span><span class="val">{{ '%.3f'|format(r.energy_kwh) }} kWh</span></div>
+      <div class="row"><span>Tempo total</span><span class="val">{{ '%.1f'|format(r.duration_min) }} min</span></div>
+      <div class="row"><span>Valor total</span><span class="val">{{ r.revenue_rs|brl }}</span></div>
+    </div>
+
+    <div class="wizard-actions">
+      <a class="btn-link primary" href="/cliente/home">Voltar ao início</a>
+    </div>
+  </main>
+
+</body>
+</html>

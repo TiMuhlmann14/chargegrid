@@ -19,12 +19,6 @@
       <span class="site">{{ state.site }}</span>
     </div>
     <div class="clock mono" id="clock">{{ state.clock }}</div>
-    <div class="sim-controls" role="group" aria-label="Controles de simulação">
-      <button type="button" data-scenario="vazio" hx-post="/simulate/vazio" hx-swap="none">Vazio</button>
-      <button type="button" data-scenario="chegada" hx-post="/simulate/chegada" hx-swap="none">Chegada gradual</button>
-      <button type="button" class="primary" data-scenario="pico" hx-post="/simulate/pico" hx-swap="none">Pico (12 carros)</button>
-      <button type="button" data-scenario="alivio" hx-post="/simulate/alivio" hx-swap="none">Alívio</button>
-    </div>
   </header>
 
   <section class="panel unifilar-panel">

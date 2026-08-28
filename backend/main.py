@@ -15,12 +15,13 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from demand_controller import DemandController
 import chatbot
+import client_store
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("chargegrid.main")
@@ -42,26 +43,6 @@ CHARGER_LAYOUT = [
     ("CG-11", "Vaga C3", 22.0), ("CG-12", "Vaga C4", 22.0),
 ]
 
-# Placas "história" reaproveitadas dos mocks originais — dá continuidade
-# à narrativa da demo entre cenários de simulação.
-DEMO_PLATES = {
-    "CG-01": "ABC-1A11", "CG-02": "XYZ-2B22", "CG-03": "QRS-3C33",
-    "CG-04": "LMN-4D44", "CG-05": "OPQ-5E55", "CG-06": "TUV-6F66",
-    "CG-07": "HIJ-7G77", "CG-08": "KLM-8H88", "CG-09": "NOP-9I99",
-    "CG-10": "STU-0J00", "CG-11": "VWX-1K11", "CG-12": "YZA-2L22",
-}
-
-# Conjuntos-alvo de carregadores ocupados por cenário de simulação.
-# /simulate/{cenario} reconcilia o estado atual contra o alvo, então os
-# botões podem ser pressionados em qualquer ordem.
-SCENARIOS: dict[str, list[str]] = {
-    "vazio": [],
-    "chegada": ["CG-01", "CG-02", "CG-03", "CG-04", "CG-05", "CG-06"],
-    "pico": [cid for cid, _, _ in CHARGER_LAYOUT],
-    "alivio": ["CG-10", "CG-11", "CG-12"],
-}
-
-SCENARIO_STEP_DELAY_S = 0.45
 TICK_INTERVAL_S = 1.0
 
 # ----------------------------------------------------------------------
@@ -69,7 +50,6 @@ TICK_INTERVAL_S = 1.0
 # ----------------------------------------------------------------------
 
 controller = DemandController(SITE_NAME, CONTRACTED_LIMIT_KW)
-scenario_lock = asyncio.Lock()
 
 
 class ConnectionManager:
@@ -112,6 +92,21 @@ manager = ConnectionManager()
 
 payment_status: dict[str, str] = {}
 sim_flags: dict[str, str | None] = {}
+
+# ----------------------------------------------------------------------
+# Camada do fluxo do cliente (login → carregar → pagar) — também fora do
+# DemandController, pelo mesmo motivo: são dados de UI/demo (meta de kWh
+# escolhida, qual cliente está em qual carregador), não estado elétrico.
+#
+#   charging_goals:      charger_id -> {"target_kwh", "cpf"} da sessão ativa
+#   client_active_charger: cpf -> charger_id (para achar "minha recarga")
+#   last_receipt:         cpf -> resumo da última recarga concluída (para a
+#                          tela de conclusão sobreviver a um F5)
+# ----------------------------------------------------------------------
+
+charging_goals: dict[str, dict] = {}
+client_active_charger: dict[str, str] = {}
+last_receipt: dict[str, dict] = {}
 
 
 def utilization_level(pct: float) -> str:
@@ -242,6 +237,37 @@ def random_plate() -> str:
 
 
 # ----------------------------------------------------------------------
+# Estimativa de recarga (App do Cliente) — NÃO toca no DemandController
+# ----------------------------------------------------------------------
+
+def estimate_charge(charger_id: str, target_kwh: float) -> dict:
+    """
+    Estimativa simples de tempo/custo para uma recarga que AINDA NÃO
+    começou, baseada na condição ATUAL da rede (kW ainda disponíveis
+    agora). NÃO é um modelo de previsão de horário de pico nem simula a
+    redistribuição real que aconteceria ao conectar — é só uma projeção
+    ingênua assumindo potência constante, para dar uma noção ao cliente
+    antes de pagar. A tela deixa isso explícito para não parecer uma
+    previsão de verdade.
+    """
+    charger = controller.chargers[charger_id]
+    estimated_power_kw = round(min(charger.max_kw, max(0.0, controller.available_kw)), 2)
+
+    if estimated_power_kw > 0:
+        estimated_time_min = round((target_kwh / estimated_power_kw) * 60, 1)
+    else:
+        estimated_time_min = None  # rede sem folga agora — não dá pra estimar tempo
+
+    return {
+        "charger_id": charger_id,
+        "target_kwh": round(target_kwh, 2),
+        "estimated_power_kw": estimated_power_kw,
+        "estimated_time_min": estimated_time_min,
+        "estimated_cost_rs": round(target_kwh * TARIFF_RS_PER_KWH, 2),
+    }
+
+
+# ----------------------------------------------------------------------
 # Ticker: acumula energia das sessões ativas e transmite o estado a cada 1s
 # ----------------------------------------------------------------------
 
@@ -252,34 +278,6 @@ async def ticker_loop() -> None:
             session.update_energy(TICK_INTERVAL_S)
         if controller.active_sessions or manager.active:
             await manager.broadcast(build_payload())
-
-
-# ----------------------------------------------------------------------
-# Cenários de simulação — sequência real via DemandController
-# ----------------------------------------------------------------------
-
-async def run_scenario(cenario: str) -> None:
-    async with scenario_lock:
-        target = set(SCENARIOS[cenario])
-        current = {cid for cid, c in controller.chargers.items() if c.is_occupied}
-        to_disconnect = sorted(current - target)
-        to_connect = sorted(target - current)
-
-        controller._log_event("SIMULATION_START", "SYSTEM", f"Cenário '{cenario}' iniciado")
-        await manager.broadcast(build_payload())
-
-        for cid in to_disconnect:
-            controller.vehicle_disconnect(cid)
-            await manager.broadcast(build_payload())
-            await asyncio.sleep(SCENARIO_STEP_DELAY_S)
-
-        for cid in to_connect:
-            controller.vehicle_connect(cid, DEMO_PLATES.get(cid, random_plate()))
-            await manager.broadcast(build_payload())
-            await asyncio.sleep(SCENARIO_STEP_DELAY_S)
-
-        controller._log_event("SIMULATION_END", "SYSTEM", f"Cenário '{cenario}' concluído")
-        await manager.broadcast(build_payload())
 
 
 # ----------------------------------------------------------------------
@@ -317,17 +315,324 @@ async def dashboard(request: Request):
     )
 
 
-@app.get("/cliente/{charger_id}", response_class=HTMLResponse)
-async def cliente(request: Request, charger_id: str):
+# ----------------------------------------------------------------------
+# App do Cliente — autenticação (CPF + senha, demo sem segurança real)
+# ----------------------------------------------------------------------
+
+def _current_account(request: Request) -> dict | None:
+    token = request.cookies.get(client_store.SESSION_COOKIE)
+    return client_store.get_account_from_token(token)
+
+
+@app.get("/cliente/login", response_class=HTMLResponse)
+async def cliente_login_form(request: Request):
+    if _current_account(request):
+        return RedirectResponse("/cliente/home", status_code=303)
+    return templates.TemplateResponse(
+        "cliente/login.html",
+        {"request": request, "error": None, "cpf": "", "show_forgot": False},
+    )
+
+
+@app.post("/cliente/login", response_class=HTMLResponse)
+async def cliente_login(request: Request, cpf: str = Form(...), senha: str = Form(...)):
+    if not client_store.account_exists(cpf):
+        return RedirectResponse(f"/cliente/cadastro?cpf={client_store.normalize_cpf(cpf)}", status_code=303)
+    account = client_store.check_login(cpf, senha)
+    if not account:
+        return templates.TemplateResponse(
+            "cliente/login.html",
+            {"request": request, "error": "Senha incorreta.", "cpf": cpf, "show_forgot": True},
+            status_code=401,
+        )
+    token = client_store.start_session(account["cpf"])
+    response = RedirectResponse("/cliente/home", status_code=303)
+    response.set_cookie(client_store.SESSION_COOKIE, token, httponly=True, samesite="lax")
+    return response
+
+
+@app.get("/cliente/cadastro", response_class=HTMLResponse)
+async def cliente_cadastro_form(request: Request, cpf: str = ""):
+    return templates.TemplateResponse(
+        "cliente/cadastro.html",
+        {"request": request, "error": None, "form": {"nome": "", "cpf": cpf, "email": ""}},
+    )
+
+
+@app.post("/cliente/cadastro", response_class=HTMLResponse)
+async def cliente_cadastro(
+    request: Request,
+    nome: str = Form(...),
+    cpf: str = Form(...),
+    email: str = Form(...),
+    senha: str = Form(...),
+    confirmar_senha: str = Form(...),
+):
+    form = {"nome": nome, "cpf": cpf, "email": email}
+    cpf_norm = client_store.normalize_cpf(cpf)
+
+    if len(cpf_norm) != 11:
+        return templates.TemplateResponse(
+            "cliente/cadastro.html",
+            {"request": request, "error": "CPF inválido — deve ter 11 dígitos.", "form": form},
+            status_code=400,
+        )
+    if client_store.account_exists(cpf_norm):
+        return templates.TemplateResponse(
+            "cliente/cadastro.html",
+            {"request": request, "error": "Já existe uma conta com esse CPF. Faça login.", "form": form},
+            status_code=409,
+        )
+    if not senha or senha != confirmar_senha:
+        return templates.TemplateResponse(
+            "cliente/cadastro.html",
+            {"request": request, "error": "As senhas não coincidem (ou estão vazias).", "form": form},
+            status_code=400,
+        )
+
+    account = client_store.create_account(nome, cpf_norm, email, senha)
+    token = client_store.start_session(account["cpf"])
+    response = RedirectResponse("/cliente/home", status_code=303)
+    response.set_cookie(client_store.SESSION_COOKIE, token, httponly=True, samesite="lax")
+    return response
+
+
+@app.get("/cliente/esqueci-senha", response_class=HTMLResponse)
+async def cliente_esqueci_senha(request: Request):
+    """Só a mensagem/link — sem fluxo de recuperação real (definido com o professor)."""
+    return templates.TemplateResponse("cliente/esqueci_senha.html", {"request": request})
+
+
+@app.post("/cliente/logout")
+async def cliente_logout(request: Request):
+    client_store.end_session(request.cookies.get(client_store.SESSION_COOKIE))
+    response = RedirectResponse("/cliente/login", status_code=303)
+    response.delete_cookie(client_store.SESSION_COOKIE)
+    return response
+
+
+# ----------------------------------------------------------------------
+# App do Cliente — páginas autenticadas
+# ----------------------------------------------------------------------
+
+@app.get("/cliente/home", response_class=HTMLResponse)
+async def cliente_home(request: Request):
+    account = _current_account(request)
+    if not account:
+        return RedirectResponse("/cliente/login", status_code=303)
+    active_charger_id = client_active_charger.get(account["cpf"])
+    return templates.TemplateResponse(
+        "cliente/home.html",
+        {"request": request, "account": account, "active_charger_id": active_charger_id},
+    )
+
+
+@app.get("/cliente/carregar", response_class=HTMLResponse)
+async def cliente_carregar_form(request: Request):
+    account = _current_account(request)
+    if not account:
+        return RedirectResponse("/cliente/login", status_code=303)
+    if account["cpf"] in client_active_charger:
+        return RedirectResponse("/cliente/carregando", status_code=303)
+
+    payload = build_payload()
+    free_chargers = [c for c in payload["chargers"] if c["status"] == "LIVRE"]
+    return templates.TemplateResponse(
+        "cliente/carregar_config.html",
+        {"request": request, "free_chargers": free_chargers, "error": None,
+         "form": {"placa": "", "charger_id": "", "energia_kwh": ""}},
+    )
+
+
+@app.post("/cliente/carregar/resumo", response_class=HTMLResponse)
+async def cliente_carregar_resumo(
+    request: Request,
+    placa: str = Form(...),
+    charger_id: str = Form(...),
+    energia_kwh: float = Form(...),
+):
+    account = _current_account(request)
+    if not account:
+        return RedirectResponse("/cliente/login", status_code=303)
+
+    charger_id = charger_id.upper()
+    placa = placa.strip().upper()
+    payload = build_payload()
+    free_chargers = [c for c in payload["chargers"] if c["status"] == "LIVRE"]
+
+    if charger_id not in controller.chargers or energia_kwh <= 0 or not placa:
+        return templates.TemplateResponse(
+            "cliente/carregar_config.html",
+            {"request": request, "free_chargers": free_chargers,
+             "error": "Preencha placa, vaga e energia desejada (kWh) corretamente.",
+             "form": {"placa": placa, "charger_id": charger_id, "energia_kwh": energia_kwh}},
+            status_code=400,
+        )
+
+    if controller.chargers[charger_id].is_occupied:
+        return templates.TemplateResponse(
+            "cliente/carregar_config.html",
+            {"request": request, "free_chargers": free_chargers,
+             "error": f"A vaga {charger_id} acabou de ficar ocupada — escolha outra.",
+             "form": {"placa": placa, "charger_id": "", "energia_kwh": energia_kwh}},
+            status_code=409,
+        )
+
+    charger_info = next(c for c in payload["chargers"] if c["id"] == charger_id)
+    estimate = estimate_charge(charger_id, energia_kwh)
+    return templates.TemplateResponse(
+        "cliente/carregar_resumo.html",
+        {"request": request, "placa": placa, "charger": charger_info,
+         "energia_kwh": energia_kwh, "estimate": estimate, "site": SITE_NAME},
+    )
+
+
+@app.post("/cliente/carregar/pagar", response_class=HTMLResponse)
+async def cliente_carregar_pagar(
+    request: Request,
+    placa: str = Form(...),
+    charger_id: str = Form(...),
+    energia_kwh: float = Form(...),
+    metodo_pagamento: str = Form(...),
+):
+    account = _current_account(request)
+    if not account:
+        return RedirectResponse("/cliente/login", status_code=303)
+
+    charger_id = charger_id.upper()
+    placa = placa.strip().upper()
+
+    # Regra de teste combinada: todo pagamento é aprovado instantaneamente —
+    # não há gateway de pagamento real nesta demo.
+    result = controller.vehicle_connect(charger_id, placa)
+    if isinstance(result, dict) and "error" in result:
+        payload = build_payload()
+        free_chargers = [c for c in payload["chargers"] if c["status"] == "LIVRE"]
+        return templates.TemplateResponse(
+            "cliente/carregar_config.html",
+            {"request": request, "free_chargers": free_chargers,
+             "error": f"Não foi possível iniciar a recarga: {result['error']}",
+             "form": {"placa": placa, "charger_id": "", "energia_kwh": energia_kwh}},
+            status_code=409,
+        )
+
+    charging_goals[charger_id] = {"target_kwh": energia_kwh, "cpf": account["cpf"]}
+    client_active_charger[account["cpf"]] = charger_id
+    client_store.register_vehicle(account["cpf"], placa)
+    controller._log_event(
+        "CLIENT_PAYMENT_APPROVED", charger_id,
+        f"[DEMO] Pagamento ({metodo_pagamento}) aprovado — recarga iniciada pelo cliente {account['nome']}",
+    )
+    await manager.broadcast(build_payload())
+
+    return RedirectResponse("/cliente/carregando", status_code=303)
+
+
+@app.get("/cliente/carregando", response_class=HTMLResponse)
+async def cliente_carregando(request: Request):
+    account = _current_account(request)
+    if not account:
+        return RedirectResponse("/cliente/login", status_code=303)
+
+    charger_id = client_active_charger.get(account["cpf"])
+    if not charger_id:
+        return RedirectResponse("/cliente/home", status_code=303)
+
+    payload = build_payload()
+    charger_state = next((c for c in payload["chargers"] if c["id"] == charger_id), None)
+
+    # Se um operador forçou a parada pelo Dashboard enquanto o cliente estava
+    # nesta tela, a vaga já não está mais OCUPADA — encerra a associação e
+    # manda o cliente de volta pro início em vez de mostrar uma tela travada.
+    if not charger_state or charger_state["status"] != "OCUPADO":
+        client_active_charger.pop(account["cpf"], None)
+        charging_goals.pop(charger_id, None)
+        return RedirectResponse("/cliente/home", status_code=303)
+
+    target_kwh = charging_goals.get(charger_id, {}).get("target_kwh", 0.0)
+    return templates.TemplateResponse(
+        "cliente/carregando.html",
+        {"request": request, "charger": charger_state, "tariff": TARIFF_RS_PER_KWH,
+         "site": SITE_NAME, "target_kwh": target_kwh},
+    )
+
+
+@app.post("/cliente/carregando/encerrar", response_class=HTMLResponse)
+async def cliente_carregando_encerrar(request: Request):
+    account = _current_account(request)
+    if not account:
+        return RedirectResponse("/cliente/login", status_code=303)
+
+    charger_id = client_active_charger.get(account["cpf"])
+    if not charger_id:
+        return RedirectResponse("/cliente/home", status_code=303)
+
+    charger = controller.chargers[charger_id]
+    session = charger.session  # referência — vehicle_disconnect() atualiza e arquiva esse mesmo objeto
+    location = charger.location
+
+    result = controller.vehicle_disconnect(charger_id)
+    await manager.broadcast(build_payload())
+
+    charging_goals.pop(charger_id, None)
+    client_active_charger.pop(account["cpf"], None)
+
+    if session is not None and not (isinstance(result, dict) and "error" in result):
+        # Dados já existem em completed_sessions — só formata pra tela de conclusão.
+        last_receipt[account["cpf"]] = {
+            "vehicle_id": session.vehicle_id,
+            "charger_id": charger_id,
+            "location": location,
+            "energy_kwh": round(session.energy_consumed_kwh, 3),
+            "duration_min": round(session.duration_minutes(), 1),
+            "revenue_rs": round(session.energy_consumed_kwh * TARIFF_RS_PER_KWH, 2),
+        }
+
+    return RedirectResponse("/cliente/carregando/concluido", status_code=303)
+
+
+@app.get("/cliente/carregando/concluido", response_class=HTMLResponse)
+async def cliente_carregando_concluido(request: Request):
+    account = _current_account(request)
+    if not account:
+        return RedirectResponse("/cliente/login", status_code=303)
+    receipt = last_receipt.get(account["cpf"])
+    if not receipt:
+        return RedirectResponse("/cliente/home", status_code=303)
+    return templates.TemplateResponse("cliente/conclusao.html", {"request": request, "r": receipt, "site": SITE_NAME})
+
+
+@app.get("/cliente/perfil", response_class=HTMLResponse)
+async def cliente_perfil(request: Request):
+    account = _current_account(request)
+    if not account:
+        return RedirectResponse("/cliente/login", status_code=303)
+    return templates.TemplateResponse("cliente/perfil.html", {"request": request, "account": account})
+
+
+@app.get("/cliente/historico", response_class=HTMLResponse)
+async def cliente_historico(request: Request):
+    account = _current_account(request)
+    if not account:
+        return RedirectResponse("/cliente/login", status_code=303)
+    plates = set(account.get("veiculos", []))
+    sessions = [s for s in completed_sessions_payload() if s["vehicle_id"] in plates]
+    sessions.reverse()
+    return templates.TemplateResponse("cliente/historico.html", {"request": request, "account": account, "sessions": sessions})
+
+
+# ----------------------------------------------------------------------
+# App do Cliente — estimativa de recarga (NÃO toca no DemandController)
+# ----------------------------------------------------------------------
+
+@app.post("/estimate")
+async def estimate(charger_id: str = Form(...), target_kwh: float = Form(...)):
     charger_id = charger_id.upper()
     if charger_id not in controller.chargers:
-        raise HTTPException(status_code=404, detail=f"Carregador '{charger_id}' não encontrado.")
-    payload = build_payload()
-    charger_state = next(c for c in payload["chargers"] if c["id"] == charger_id)
-    return templates.TemplateResponse(
-        "app_cliente.html",
-        {"request": request, "charger": charger_state, "tariff": TARIFF_RS_PER_KWH},
-    )
+        raise HTTPException(status_code=404, detail="Carregador não encontrado.")
+    if target_kwh <= 0:
+        raise HTTPException(status_code=400, detail="Energia desejada deve ser maior que zero.")
+    return JSONResponse(estimate_charge(charger_id, target_kwh))
 
 
 # ----------------------------------------------------------------------
@@ -430,14 +735,6 @@ async def disconnect(charger_id: str = Form(...)):
     if isinstance(result, dict) and "error" in result:
         raise HTTPException(status_code=409, detail=result["error"])
     return JSONResponse({"ok": True})
-
-
-@app.post("/simulate/{cenario}")
-async def simulate(cenario: str):
-    if cenario not in SCENARIOS:
-        raise HTTPException(status_code=404, detail=f"Cenário '{cenario}' desconhecido.")
-    asyncio.create_task(run_scenario(cenario))
-    return JSONResponse({"ok": True, "cenario": cenario}, status_code=202)
 
 
 @app.get("/sessions")

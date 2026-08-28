@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChargeGrid — Carregar veículo</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="cliente-screen">
+
+  <main class="cliente-card wide">
+    <div class="cliente-brand">⚡ ChargeGrid</div>
+    <h1>Carregar veículo</h1>
+
+    {% if error %}<div class="field-error">{{ error }}</div>{% endif %}
+
+    {% if free_chargers %}
+    <form method="post" action="/cliente/carregar/resumo" class="wizard-form">
+      <div class="form-field">
+        <label for="placa">Placa do veículo</label>
+        <input type="text" id="placa" name="placa" required value="{{ form.placa }}" placeholder="ABC-1D23" autofocus>
+      </div>
+      <div class="form-field">
+        <label for="charger_id">Vaga</label>
+        <select id="charger_id" name="charger_id" required>
+          <option value="" disabled {{ 'selected' if not form.charger_id else '' }}>Escolha uma vaga livre</option>
+          {% for c in free_chargers %}
+          <option value="{{ c.id }}" {{ 'selected' if form.charger_id == c.id else '' }}>{{ c.id }} — {{ c.location }} (até {{ '%.0f'|format(c.max_kw) }} kW)</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-field">
+        <label for="energia_kwh">Energia desejada (kWh)</label>
+        <input type="number" id="energia_kwh" name="energia_kwh" required min="1" step="0.5" value="{{ form.energia_kwh }}" placeholder="Ex.: 20">
+      </div>
+      <button type="submit" class="primary">Continuar</button>
+    </form>
+    {% else %}
+    <div class="banner-warning">Nenhuma vaga livre no momento. Tente novamente em instantes.</div>
+    {% endif %}
+
+    <div class="link-row"><a href="/cliente/home">← Voltar</a></div>
+  </main>
+
+</body>
+</html>

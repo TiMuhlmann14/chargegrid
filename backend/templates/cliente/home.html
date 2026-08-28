@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChargeGrid — Olá, {{ account.nome.split(' ')[0] }}</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="cliente-screen">
+
+  <main class="cliente-card">
+    <div class="cliente-brand">⚡ ChargeGrid</div>
+    <h1 class="home-greeting">Olá, {{ account.nome.split(' ')[0] }}!</h1>
+
+    {% if active_charger_id %}
+    <div class="banner-warning">Você tem uma recarga em andamento na vaga {{ active_charger_id }}.</div>
+    {% endif %}
+
+    <nav class="home-menu">
+      {% if active_charger_id %}
+      <a href="/cliente/carregando">🔌 Ver recarga em andamento</a>
+      {% else %}
+      <a href="/cliente/carregar">🚗 Carregar veículo</a>
+      {% endif %}
+      <a href="/cliente/perfil">👤 Meu perfil</a>
+      <a href="/cliente/historico">📜 Histórico de carregamentos</a>
+      <form method="post" action="/cliente/logout" style="margin:0;">
+        <button type="submit" class="logout-btn">🚪 Sair</button>
+      </form>
+    </nav>
+  </main>
+
+</body>
+</html>

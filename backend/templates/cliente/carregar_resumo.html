@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChargeGrid — Resumo da recarga</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="cliente-screen">
+
+  <main class="cliente-card wide">
+    <div class="cliente-brand">⚡ ChargeGrid</div>
+    <h1>Resumo da recarga</h1>
+
+    <div class="summary-list">
+      <div class="row"><span>Veículo</span><span class="val">{{ placa }}</span></div>
+      <div class="row"><span>Vaga</span><span class="val">{{ charger.id }} — {{ charger.location }}</span></div>
+      <div class="row"><span>Energia desejada</span><span class="val">{{ '%.1f'|format(energia_kwh) }} kWh</span></div>
+      <div class="row"><span>Tempo estimado</span><span class="val">
+        {% if estimate.estimated_time_min is not none %}~{{ '%.0f'|format(estimate.estimated_time_min) }} min{% else %}indisponível agora{% endif %}
+      </span></div>
+      <div class="row"><span>Valor estimado</span><span class="val">{{ estimate.estimated_cost_rs|brl }}</span></div>
+    </div>
+
+    <div class="banner-info">
+      Estimativa baseada nas condições atuais da rede ({{ '%.1f'|format(estimate.estimated_power_kw) }} kW disponíveis
+      agora nessa vaga) — não é uma previsão de horário de pico, e a potência real
+      entregue pode mudar conforme outros veículos conectarem ou saírem.
+    </div>
+
+    <form method="post" action="/cliente/carregar/pagar" class="wizard-form">
+      <input type="hidden" name="placa" value="{{ placa }}">
+      <input type="hidden" name="charger_id" value="{{ charger.id }}">
+      <input type="hidden" name="energia_kwh" value="{{ energia_kwh }}">
+
+      <div class="form-field">
+        <label>Forma de pagamento</label>
+        <div class="pay-options">
+          <label class="pay-option">
+            <input type="radio" name="metodo_pagamento" value="pix" checked>
+            <span class="pay-label">📱 Pix</span>
+          </label>
+          <label class="pay-option">
+            <input type="radio" name="metodo_pagamento" value="cartao">
+            <span class="pay-label">💳 Cartão salvo — •••• 4242</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="wizard-actions">
+        <button type="submit" class="primary">Pagar agora</button>
+      </div>
+    </form>
+
+    <div class="link-row"><a href="/cliente/carregar">← Voltar</a></div>
+  </main>
+
+</body>
+</html>

@@ -21,20 +21,28 @@ uvicorn main:app --reload --port 8000
 
 Depois abra:
 
-- **Dashboard de Gestão** (operador): http://localhost:8000/
-- **App do Cliente** (motorista), para qualquer um dos 12 carregadores: http://localhost:8000/cliente/CG-07
+- **Dashboard de Gestão** (operador): http://localhost:8000/ — só observa e reflete
+  o que acontece; não inicia sessões.
+- **App do Cliente** (motorista): http://localhost:8000/cliente/login — cadastro/login
+  por CPF, depois "Carregar veículo" para escolher vaga livre, energia desejada,
+  pagar (mock) e acompanhar a recarga.
+
+Use `scripts/seed_demo.py` (com o servidor rodando) para popular várias vagas
+ocupadas de uma vez antes de gravar uma demo, sem repetir o fluxo do cliente
+manualmente — não é uma feature do produto, é só uma ferramenta de bastidor.
 
 ## O que testar
 
-- Botões **Chegada gradual / Pico (12 carros) / Alívio / Vazio** no topo do dashboard
-  disparam sequências reais no `DemandController` (conectam/desconectam veículos um a
-  um, com redistribuição de potência de verdade) — acompanhe o diagrama unifilar, a
-  tabela e o console de eventos mudando ao vivo.
-- Clique em qualquer carregador (nó do diagrama ou linha da tabela) para expandir os
-  detalhes da sessão, com opção de conectar/desconectar manualmente.
-- Abra `/cliente/CG-0X` numa segunda aba (ou no celular, mesma rede) enquanto mexe no
-  dashboard — kWh, tempo e custo do carregador escolhido atualizam sozinhos via
-  WebSocket, sem recarregar a página.
+- Faça login/cadastro em `/cliente/login`, escolha "Carregar veículo", selecione
+  uma vaga livre e uma energia desejada, veja a estimativa, pague (mock) — a
+  recarga começa de verdade (`vehicle_connect` real) e você é levado pra tela de
+  acompanhamento.
+- Com o Dashboard aberto em outra aba, confirme que a vaga aparece ocupada
+  automaticamente via WebSocket, sem precisar mexer em nada no Dashboard.
+- Clique num carregador ocupado no Dashboard para ver detalhes e, se precisar,
+  forçar o encerramento da sessão como ação operacional de emergência.
+- No app do cliente, clique em "Encerrar recarga e pagar" e confira a tela de
+  conclusão com os totais.
 - Pergunte algo ao Assistente IA no dashboard, ex.: "quantos livres?", "faturamento
   de hoje", "status do CG-03".
 
@@ -45,13 +53,16 @@ backend/
 ├── main.py                  # app FastAPI, rotas, WebSocket, ticker de energia
 ├── demand_controller.py     # lógica real de negócio (fornecida, não reescrita)
 ├── chatbot.py                # assistente por regras
+├── client_store.py           # contas de cliente (login/cadastro), em memória
 ├── templates/
 │   ├── dashboard_gestao.html
-│   ├── app_cliente.html
+│   ├── cliente/               # login, cadastro, home, fluxo de recarga
 │   └── partials/
 ├── static/
 │   ├── style.css             # tokens do DESIGN_SYSTEM.md
 │   └── app.js                # WebSocket + animações SVG (único JS manual)
+scripts/
+└── seed_demo.py               # ferramenta de bastidor — popula vagas antes da demo
 mocks/                        # cenários de referência (não servidos como API)
 DESIGN_SYSTEM.md
 requirements.txt

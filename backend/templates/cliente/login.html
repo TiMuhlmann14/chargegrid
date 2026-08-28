@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChargeGrid — Entrar</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="cliente-screen">
+
+  <main class="cliente-card">
+    <div class="cliente-brand">⚡ ChargeGrid</div>
+    <h1>Entrar</h1>
+
+    {% if error %}<div class="field-error">{{ error }}</div>{% endif %}
+
+    <form method="post" action="/cliente/login" class="auth-form">
+      <div class="form-field">
+        <label for="cpf">CPF</label>
+        <input type="text" id="cpf" name="cpf" required value="{{ cpf }}" placeholder="Somente números" inputmode="numeric" autofocus>
+      </div>
+      <div class="form-field">
+        <label for="senha">Senha</label>
+        <input type="password" id="senha" name="senha" required>
+      </div>
+      <button type="submit" class="primary">Entrar</button>
+    </form>
+
+    {% if show_forgot %}
+    <div class="link-row"><a href="/cliente/esqueci-senha">Esqueci minha senha</a></div>
+    {% endif %}
+    <div class="link-row">Não tem conta? <a href="/cliente/cadastro">Cadastre-se</a></div>
+  </main>
+
+</body>
+</html>

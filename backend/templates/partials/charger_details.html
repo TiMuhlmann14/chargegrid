@@ -28,13 +28,13 @@
     <dd>{% if c.energy_kwh is not none %}{{ (c.energy_kwh * tariff)|brl }}{% else %}—{% endif %}</dd>
   </dl>
 
+  {% if c.status == 'OCUPADO' %}
   <div style="margin-top:0.7rem;">
-    {% if c.status == 'OCUPADO' %}
-    <button type="button" hx-post="/disconnect" hx-vals='{"charger_id": "{{ c.id }}"}' hx-swap="none" onclick="setTimeout(ChargeGrid.closeDetails, 150)">Desconectar veículo</button>
-    {% else %}
-    <button type="button" class="primary" hx-post="/connect" hx-vals='{"charger_id": "{{ c.id }}"}' hx-swap="none" onclick="setTimeout(ChargeGrid.closeDetails, 150)">Conectar veículo de teste</button>
-    {% endif %}
+    <button type="button" hx-post="/disconnect" hx-vals='{"charger_id": "{{ c.id }}"}' hx-swap="none" onclick="setTimeout(ChargeGrid.closeDetails, 150)">Encerrar / forçar parada (operador)</button>
   </div>
+  {% else %}
+  <p style="margin-top:0.7rem; color:var(--ink-low); font-size:0.82rem;">Vaga livre — aguardando um cliente iniciar a recarga pelo app.</p>
+  {% endif %}
 
   <div class="demo-controls">
     <div class="demo-controls-title">Controles de demo — não fazem parte do sistema real</div>
