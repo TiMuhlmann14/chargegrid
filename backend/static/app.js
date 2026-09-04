@@ -309,6 +309,38 @@
   }
 
   // ------------------------------------------------------------------
+  // Tela "pagar com Pix" — botão "Copiar" do código copia-e-cola.
+  // Puro utilitário de UI (clipboard), sem lógica de negócio: quem
+  // decide se o pagamento foi confirmado é sempre o polling no server
+  // (ver /cliente/carregar/pix/status em main.py), nunca este botão.
+  // ------------------------------------------------------------------
+
+  function copyPixCode() {
+    const input = $("pix-code");
+    const btn = $("pix-copy-btn");
+    if (!input) return;
+    input.select();
+    input.setSelectionRange(0, 99999);
+
+    const flashCopied = () => {
+      if (!btn) return;
+      const original = btn.textContent;
+      btn.textContent = "Copiado!";
+      setTimeout(() => { btn.textContent = original; }, 1500);
+    };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(input.value).then(flashCopied).catch(() => {
+        document.execCommand("copy");
+        flashCopied();
+      });
+    } else {
+      document.execCommand("copy");
+      flashCopied();
+    }
+  }
+
+  // ------------------------------------------------------------------
   // Init
   // ------------------------------------------------------------------
 
@@ -325,5 +357,6 @@
     showDetails,
     closeDetails,
     toggleChat,
+    copyPixCode,
   };
 })();

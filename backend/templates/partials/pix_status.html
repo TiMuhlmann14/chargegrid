@@ -1,0 +1,18 @@
+{% if state == "error" %}
+<div class="pix-status error">⚠ Não deu pra confirmar agora: {{ message }}. Tentando de novo em instantes…</div>
+{% else %}
+<div class="pix-status pending"><span class="pix-status-dot"></span> Aguardando confirmação do pagamento…</div>
+{% endif %}
+
+{% if qr_just_arrived %}
+<!-- QR não veio pronto na criação (ver payments.py) — chegou agora neste
+     polling. Troca só esses dois blocos, por id, sem mexer no resto da
+     página (htmx out-of-band swap). -->
+<div id="pix-qr-wrap" class="pix-qr-wrap" hx-swap-oob="true">
+  <img class="pix-qr" src="data:image/png;base64,{{ pending.qr_code_base64 }}" alt="QR Code Pix para pagamento">
+</div>
+<div id="pix-copy-row" class="pix-copy-row" hx-swap-oob="true">
+  <input type="text" id="pix-code" class="mono" readonly value="{{ pending.qr_code }}">
+  <button type="button" id="pix-copy-btn" onclick="ChargeGrid.copyPixCode()">Copiar</button>
+</div>
+{% endif %}

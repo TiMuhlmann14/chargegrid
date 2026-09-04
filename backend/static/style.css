@@ -815,6 +815,57 @@ input:focus, select:focus { border-color: var(--goodwe-red); outline: none; }
 .table-simple td { padding: 0.5rem; border-bottom: 1px dashed var(--line); font-family: var(--font-mono); }
 .empty-state { color: var(--ink-low); font-style: italic; text-align: center; padding: 1rem 0; }
 
+/* Tela "pagar com Pix" (PAYMENT_MODE=mercadopago) */
+.pix-qr-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 1rem;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  margin: 1rem 0;
+}
+.pix-qr { width: 200px; height: 200px; image-rendering: pixelated; }
+.pix-qr-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--ink-low);
+  font-size: 0.82rem;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+}
+
+.pix-copy-row { display: flex; gap: 0.5rem; }
+.pix-copy-row input { flex: 1; font-size: 0.72rem; }
+.pix-copy-row button { flex-shrink: 0; }
+
+.pix-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.7rem;
+  margin: 1rem 0;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+.pix-status.pending { background: rgba(245,166,35,0.1); color: var(--ink); }
+.pix-status.approved { background: rgba(0,166,122,0.1); color: var(--available); }
+.pix-status.error { background: rgba(140,0,0,0.08); color: var(--critical); }
+
+.pix-status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--amber);
+  animation: pix-dot-pulse 1.4s ease-in-out infinite;
+}
+@keyframes pix-dot-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
 /* ================================================================ */
 /* Responsivo geral / acessibilidade                                  */
 /* ================================================================ */

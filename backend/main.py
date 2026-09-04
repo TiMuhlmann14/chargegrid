@@ -22,6 +22,7 @@ from fastapi.templating import Jinja2Templates
 from demand_controller import DemandController
 import chatbot
 import client_store
+import payments
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("chargegrid.main")
@@ -107,6 +108,20 @@ sim_flags: dict[str, str | None] = {}
 charging_goals: dict[str, dict] = {}
 client_active_charger: dict[str, str] = {}
 last_receipt: dict[str, dict] = {}
+
+# ----------------------------------------------------------------------
+# Camada de pagamento Pix (PAYMENT_MODE=mercadopago) — cpf -> cobrança
+# pendente. Vive fora do DemandController pelo mesmo motivo das outras
+# camadas de demo acima: vehicle_connect() só é chamado DEPOIS que o
+# status do pagamento vier aprovado (ver /cliente/carregar/pix/status),
+# então enquanto o Pix está pendente o carregador nem está OCUPADO
+# ainda — não daria pra guardar isso em charging_goals/client_active_charger.
+#
+#   pix_pending: cpf -> {charger_id, placa, energia_kwh, order_id,
+#                        qr_code, qr_code_base64, valor_rs}
+# ----------------------------------------------------------------------
+
+pix_pending: dict[str, dict] = {}
 
 
 def utilization_level(pct: float) -> str:
@@ -428,18 +443,21 @@ async def cliente_home(request: Request):
 
 
 @app.get("/cliente/carregar", response_class=HTMLResponse)
-async def cliente_carregar_form(request: Request):
+async def cliente_carregar_form(request: Request, pix_erro: str | None = None):
     account = _current_account(request)
     if not account:
         return RedirectResponse("/cliente/login", status_code=303)
     if account["cpf"] in client_active_charger:
         return RedirectResponse("/cliente/carregando", status_code=303)
+    if account["cpf"] in pix_pending:
+        return RedirectResponse("/cliente/carregar/pix", status_code=303)
 
+    error = "O pagamento via Pix não foi aprovado — tente novamente." if pix_erro else None
     payload = build_payload()
     free_chargers = [c for c in payload["chargers"] if c["status"] == "LIVRE"]
     return templates.TemplateResponse(
         "cliente/carregar_config.html",
-        {"request": request, "free_chargers": free_chargers, "error": None,
+        {"request": request, "free_chargers": free_chargers, "error": error,
          "form": {"placa": "", "charger_id": "", "energia_kwh": ""}},
     )
 
@@ -483,7 +501,20 @@ async def cliente_carregar_resumo(
     return templates.TemplateResponse(
         "cliente/carregar_resumo.html",
         {"request": request, "placa": placa, "charger": charger_info,
-         "energia_kwh": energia_kwh, "estimate": estimate, "site": SITE_NAME},
+         "energia_kwh": energia_kwh, "estimate": estimate, "site": SITE_NAME,
+         "payment_mode": payments.PAYMENT_MODE},
+    )
+
+
+def _reject_carregar(request: Request, placa: str, energia_kwh: float, message: str, status_code: int = 409):
+    payload = build_payload()
+    free_chargers = [c for c in payload["chargers"] if c["status"] == "LIVRE"]
+    return templates.TemplateResponse(
+        "cliente/carregar_config.html",
+        {"request": request, "free_chargers": free_chargers,
+         "error": message,
+         "form": {"placa": placa, "charger_id": "", "energia_kwh": energia_kwh}},
+        status_code=status_code,
     )
 
 
@@ -502,30 +533,168 @@ async def cliente_carregar_pagar(
     charger_id = charger_id.upper()
     placa = placa.strip().upper()
 
-    # Regra de teste combinada: todo pagamento é aprovado instantaneamente —
-    # não há gateway de pagamento real nesta demo.
-    result = controller.vehicle_connect(charger_id, placa)
-    if isinstance(result, dict) and "error" in result:
+    if payments.PAYMENT_MODE == "mock":
+        # Modo de contingência (ver .env / CLAUDE.md): comportamento antigo,
+        # inalterado — todo pagamento é aprovado instantaneamente, sem
+        # chamar a API externa. Existe para a demo sobreviver a uma falha
+        # de rede na sala, trocando só PAYMENT_MODE=mock e reiniciando.
+        result = controller.vehicle_connect(charger_id, placa)
+        if isinstance(result, dict) and "error" in result:
+            return _reject_carregar(request, placa, energia_kwh, f"Não foi possível iniciar a recarga: {result['error']}")
+
+        charging_goals[charger_id] = {"target_kwh": energia_kwh, "cpf": account["cpf"]}
+        client_active_charger[account["cpf"]] = charger_id
+        client_store.register_vehicle(account["cpf"], placa)
+        controller._log_event(
+            "CLIENT_PAYMENT_APPROVED", charger_id,
+            f"[MOCK] Pagamento ({metodo_pagamento}) aprovado — recarga iniciada pelo cliente {account['nome']}",
+        )
+        await manager.broadcast(build_payload())
+        return RedirectResponse("/cliente/carregando", status_code=303)
+
+    # PAYMENT_MODE == "mercadopago": gera uma cobrança Pix real (sandbox) e
+    # manda o cliente pra tela de QR. vehicle_connect() só acontece quando
+    # o status vier aprovado — ver GET /cliente/carregar/pix/status (polling).
+    if charger_id not in controller.chargers or controller.chargers[charger_id].is_occupied:
+        return _reject_carregar(request, placa, energia_kwh, f"A vaga {charger_id} não está mais disponível — escolha outra.")
+
+    estimate = estimate_charge(charger_id, energia_kwh)
+    external_reference = f"chargegrid-{charger_id}-{account['cpf']}-{int(datetime.now().timestamp())}"
+
+    try:
+        charge = payments.create_pix_charge(
+            valor_rs=estimate["estimated_cost_rs"],
+            descricao=f"ChargeGrid - recarga {energia_kwh:.1f} kWh em {charger_id}",
+            external_reference=external_reference,
+        )
+    except Exception as exc:
         payload = build_payload()
-        free_chargers = [c for c in payload["chargers"] if c["status"] == "LIVRE"]
+        charger_info = next(c for c in payload["chargers"] if c["id"] == charger_id)
         return templates.TemplateResponse(
-            "cliente/carregar_config.html",
-            {"request": request, "free_chargers": free_chargers,
-             "error": f"Não foi possível iniciar a recarga: {result['error']}",
-             "form": {"placa": placa, "charger_id": "", "energia_kwh": energia_kwh}},
-            status_code=409,
+            "cliente/carregar_resumo.html",
+            {"request": request, "placa": placa, "charger": charger_info,
+             "energia_kwh": energia_kwh, "estimate": estimate, "site": SITE_NAME,
+             "payment_mode": payments.PAYMENT_MODE,
+             "error": f"Não foi possível gerar o Pix agora: {exc}"},
+            status_code=502,
         )
 
-    charging_goals[charger_id] = {"target_kwh": energia_kwh, "cpf": account["cpf"]}
+    pix_pending[account["cpf"]] = {
+        "charger_id": charger_id,
+        "placa": placa,
+        "energia_kwh": energia_kwh,
+        "order_id": charge["order_id"],
+        "qr_code": charge["qr_code"],
+        "qr_code_base64": charge["qr_code_base64"],
+        "valor_rs": estimate["estimated_cost_rs"],
+    }
+    controller._log_event(
+        "CLIENT_PIX_CREATED", charger_id,
+        f"[MERCADOPAGO] Pix de {format_brl(estimate['estimated_cost_rs'])} gerado para {account['nome']} — aguardando pagamento",
+    )
+    return RedirectResponse("/cliente/carregar/pix", status_code=303)
+
+
+@app.get("/cliente/carregar/pix", response_class=HTMLResponse)
+async def cliente_carregar_pix(request: Request):
+    account = _current_account(request)
+    if not account:
+        return RedirectResponse("/cliente/login", status_code=303)
+    pending = pix_pending.get(account["cpf"])
+    if not pending:
+        return RedirectResponse("/cliente/home", status_code=303)
+    return templates.TemplateResponse(
+        "cliente/carregar_pix.html",
+        {"request": request, "pending": pending, "site": SITE_NAME},
+    )
+
+
+@app.get("/cliente/carregar/pix/status", response_class=HTMLResponse)
+async def cliente_carregar_pix_status(request: Request):
+    """
+    Alvo do polling HTMX (a cada ~3s) da tela de QR — NÃO é webhook,
+    é o próprio ChargeGrid perguntando pro Mercado Pago "já pagou?"
+    (ver payments.get_charge_status). Também é o alvo do botão manual
+    "Já paguei": clicar nele só antecipa esta mesma checagem, não marca
+    nada como pago por conta própria.
+    """
+    account = _current_account(request)
+    if not account:
+        response = HTMLResponse("")
+        response.headers["HX-Redirect"] = "/cliente/login"
+        return response
+
+    pending = pix_pending.get(account["cpf"])
+    if not pending:
+        # Resolvido em outra aba, ou expirou — manda pra home.
+        response = HTMLResponse("")
+        response.headers["HX-Redirect"] = "/cliente/home"
+        return response
+
+    try:
+        status_info = payments.get_charge_status(pending["order_id"])
+    except Exception as exc:
+        return templates.TemplateResponse(
+            "partials/pix_status.html",
+            {"request": request, "state": "error", "message": str(exc)},
+        )
+
+    if status_info["status"] == "pending":
+        # Normalmente o QR já veio pronto na criação (ver payments.create_pix_charge).
+        # Mas se não veio, este polling que já roda a cada ~3s é quem completa
+        # sozinho assim que a consulta trouxer o dado — sem exigir reload da página.
+        qr_just_arrived = False
+        if not pending.get("qr_code") and status_info.get("qr_code"):
+            pending["qr_code"] = status_info["qr_code"]
+            pending["qr_code_base64"] = status_info["qr_code_base64"]
+            qr_just_arrived = True
+        return templates.TemplateResponse(
+            "partials/pix_status.html",
+            {"request": request, "state": "pending", "pending": pending, "qr_just_arrived": qr_just_arrived},
+        )
+
+    charger_id = pending["charger_id"]
+
+    if status_info["status"] == "rejected":
+        pix_pending.pop(account["cpf"], None)
+        controller._log_event(
+            "CLIENT_PIX_REJECTED", charger_id,
+            f"[MERCADOPAGO] Pix não aprovado para {account['nome']} "
+            f"({status_info['raw_status']}/{status_info['raw_status_detail']})",
+        )
+        response = HTMLResponse("")
+        response.headers["HX-Redirect"] = "/cliente/carregar?pix_erro=1"
+        return response
+
+    # status_info["status"] == "approved" — só agora conecta de verdade.
+    result = controller.vehicle_connect(charger_id, pending["placa"])
+    pix_pending.pop(account["cpf"], None)
+
+    if isinstance(result, dict) and "error" in result:
+        # Pagamento aprovado do lado do Mercado Pago, mas a vaga ficou
+        # ocupada por outra sessão nesse meio-tempo. Fora do escopo desta
+        # demo estornar automaticamente — loga bem alto pro operador ver.
+        controller._log_event(
+            "CLIENT_PIX_APPROVED_BUT_CHARGER_TAKEN", charger_id,
+            f"[MERCADOPAGO] Pix aprovado para {account['nome']} mas {charger_id} "
+            f"ficou ocupado antes — verificar manualmente.",
+        )
+        response = HTMLResponse("")
+        response.headers["HX-Redirect"] = "/cliente/home"
+        return response
+
+    charging_goals[charger_id] = {"target_kwh": pending["energia_kwh"], "cpf": account["cpf"]}
     client_active_charger[account["cpf"]] = charger_id
-    client_store.register_vehicle(account["cpf"], placa)
+    client_store.register_vehicle(account["cpf"], pending["placa"])
     controller._log_event(
         "CLIENT_PAYMENT_APPROVED", charger_id,
-        f"[DEMO] Pagamento ({metodo_pagamento}) aprovado — recarga iniciada pelo cliente {account['nome']}",
+        f"[MERCADOPAGO] Pix aprovado — recarga iniciada pelo cliente {account['nome']}",
     )
     await manager.broadcast(build_payload())
 
-    return RedirectResponse("/cliente/carregando", status_code=303)
+    response = HTMLResponse("")
+    response.headers["HX-Redirect"] = "/cliente/carregando"
+    return response
 
 
 @app.get("/cliente/carregando", response_class=HTMLResponse)

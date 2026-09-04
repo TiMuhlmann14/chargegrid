@@ -15,6 +15,8 @@
     <div class="cliente-brand">⚡ ChargeGrid</div>
     <h1>Resumo da recarga</h1>
 
+    {% if error %}<div class="field-error">{{ error }}</div>{% endif %}
+
     <div class="summary-list">
       <div class="row"><span>Veículo</span><span class="val">{{ placa }}</span></div>
       <div class="row"><span>Vaga</span><span class="val">{{ charger.id }} — {{ charger.location }}</span></div>
@@ -43,15 +45,17 @@
             <input type="radio" name="metodo_pagamento" value="pix" checked>
             <span class="pay-label">📱 Pix</span>
           </label>
+          {% if payment_mode != "mercadopago" %}
           <label class="pay-option">
             <input type="radio" name="metodo_pagamento" value="cartao">
             <span class="pay-label">💳 Cartão salvo — •••• 4242</span>
           </label>
+          {% endif %}
         </div>
       </div>
 
       <div class="wizard-actions">
-        <button type="submit" class="primary">Pagar agora</button>
+        <button type="submit" class="primary">{{ "Gerar Pix" if payment_mode == "mercadopago" else "Pagar agora" }}</button>
       </div>
     </form>
 
