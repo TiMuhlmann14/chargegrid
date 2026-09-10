@@ -41,6 +41,11 @@
     </div>
 
     <div class="cliente-status ocupado" id="cliente-status">Carregando</div>
+
+    {% with allocated_kw = charger.allocated_kw, max_kw = charger.max_kw %}
+    {% include "partials/cable_animation.html" %}
+    {% endwith %}
+
     <div class="banner-warning">⚠ Atenção! A potência entregue pode variar de acordo com a demanda da rede.</div>
 
     <div class="cliente-stats">

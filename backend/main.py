@@ -9,11 +9,15 @@ diagrama unifilar / anel de energia — como definido no DESIGN_SYSTEM.md.
 """
 
 import asyncio
+import base64
+import io
 import logging
 import random
+import secrets
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 
+import qrcode
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -131,6 +135,21 @@ last_receipt: dict[str, dict] = {}
 pix_pending: dict[str, dict] = {}
 
 PIX_TIMEOUT_S = 5 * 60  # item P0-8: totem volta sozinho se o Pix não confirmar em ~5 min
+
+# ----------------------------------------------------------------------
+# P1-2: token de acesso temporário do QR code da tela de confirmação do
+# totem — NÃO é a sessão de login completa do cliente. Token de USO
+# ÚNICO (removido do dict assim que /cliente/sessao/<token> é acessado,
+# mesmo que já esteja expirado) e com expiração curta. Atalho de
+# conveniência pra demo, não um mecanismo de segurança real — mas ainda
+# assim não fica reutilizável nem sem prazo.
+#
+#   session_qr_tokens: token -> {"cpf", "expires_at"}
+# ----------------------------------------------------------------------
+
+session_qr_tokens: dict[str, dict] = {}
+
+SESSION_QR_TTL_S = 10 * 60  # 10 minutos OU até ser usado uma vez, o que vier primeiro
 
 
 def utilization_level(pct: float) -> str:
@@ -276,6 +295,37 @@ def build_payload() -> dict:
 def random_plate() -> str:
     letters = lambda n: "".join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ", k=n))
     return f"{letters(3)}-{random.randint(0,9)}{random.choice('ABCDEFGHJKLMNPQRSTUVWXYZ')}{random.randint(10,99)}"
+
+
+def generate_qr_base64(data: str) -> str:
+    """
+    Gera o PNG de um QR code no SERVIDOR (biblioteca `qrcode`, sem API
+    externa) e devolve como base64, pra embutir direto no HTML com
+    `data:image/png;base64,...` — mesmo padrão já usado pro QR do Pix
+    (ver payments.py / carregar_pix.html). Evita depender de rede externa
+    pra um elemento visual, como já aconteceu antes com um ícone via CDN.
+    """
+    img = qrcode.make(data, box_size=6, border=2)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _issue_session_qr_url(request: Request, cpf: str) -> str:
+    """
+    P1-2: emite um token de uso único (curto prazo) e devolve a URL
+    completa que o QR code vai codificar (`/cliente/sessao/<token>`).
+    Faz uma limpeza preguiçosa de tokens expirados a cada emissão — o
+    dict é pequeno, não precisa de um job de limpeza separado.
+    """
+    now = datetime.now()
+    for existing_token, entry in list(session_qr_tokens.items()):
+        if entry["expires_at"] < now:
+            session_qr_tokens.pop(existing_token, None)
+
+    token = secrets.token_urlsafe(24)
+    session_qr_tokens[token] = {"cpf": cpf, "expires_at": now + timedelta(seconds=SESSION_QR_TTL_S)}
+    return f"{request.base_url}cliente/sessao/{token}"
 
 
 # ----------------------------------------------------------------------
@@ -978,10 +1028,39 @@ async def cliente_carregar_iniciada(request: Request):
     charger = controller.chargers.get(charger_id)
     placa = charger.session.vehicle_id if charger and charger.session else "—"
     location = charger.location if charger else charger_id
+
+    # P1-2: QR code que abre o acompanhamento direto no celular, sem
+    # precisar digitar CPF/senha de novo — ver /cliente/sessao/{token}.
+    qr_url = _issue_session_qr_url(request, account["cpf"])
+    qr_base64 = generate_qr_base64(qr_url)
+
     return templates.TemplateResponse(
         "cliente/carregar_iniciada.html",
-        {"request": request, "charger_id": charger_id, "location": location, "placa": placa},
+        {"request": request, "charger_id": charger_id, "location": location, "placa": placa, "qr_base64": qr_base64},
     )
+
+
+@app.get("/cliente/sessao/{token}")
+async def cliente_sessao_token(token: str):
+    """
+    P1-2: atalho do QR code da tela de confirmação do totem — NÃO
+    substitui o login manual (que continua funcionando normalmente),
+    é só uma conveniência a mais. Token de uso único: é removido do
+    dict aqui, na leitura, mesmo se já estiver expirado — não tem como
+    reutilizar a mesma URL uma segunda vez.
+    """
+    entry = session_qr_tokens.pop(token, None)
+    if not entry or entry["expires_at"] < datetime.now():
+        return RedirectResponse("/cliente/login", status_code=303)
+
+    cpf = entry["cpf"]
+    if not client_store.account_exists(cpf):
+        return RedirectResponse("/cliente/login", status_code=303)
+
+    session_token = client_store.start_session(cpf)
+    response = RedirectResponse(_post_login_destination(cpf), status_code=303)
+    response.set_cookie(client_store.SESSION_COOKIE, session_token, httponly=True, samesite="lax")
+    return response
 
 
 @app.get("/cliente/carregando", response_class=HTMLResponse)

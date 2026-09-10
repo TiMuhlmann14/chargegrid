@@ -29,6 +29,9 @@
   </dl>
 
   {% if c.status == 'OCUPADO' %}
+  {% with allocated_kw = c.allocated_kw, max_kw = c.max_kw %}
+  {% include "partials/cable_animation.html" %}
+  {% endwith %}
   <div style="margin-top:0.7rem;">
     <button type="button" hx-post="/disconnect" hx-vals='{"charger_id": "{{ c.id }}"}' hx-swap="none" onclick="setTimeout(ChargeGrid.closeDetails, 150)">Encerrar / forçar parada (operador)</button>
   </div>

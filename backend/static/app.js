@@ -182,6 +182,29 @@
     }
   }
 
+  // ------------------------------------------------------------------
+  // P1-1 — animação 2D do cabo carregando (SVG + CSS já renderizado no
+  // servidor via partials/cable_animation.html; aqui só mantemos o
+  // estado atualizado ao vivo via WebSocket, mesma ideia do ring-fill
+  // acima). Velocidade do pulso varia com a potência atual da sessão —
+  // mais kW, ciclo mais curto (mais rápido).
+  // ------------------------------------------------------------------
+
+  function updateCableAnimation(allocatedKw, maxKw) {
+    const path = $("cable-path");
+    if (!path) return;
+    const active = allocatedKw > 0;
+    path.classList.toggle("active", active);
+    if (active) {
+      const frac = maxKw ? Math.min(1, allocatedKw / maxKw) : 0;
+      const durationS = 2.2 - frac * 1.7; // ~2.2s parado/baixa potência → ~0.5s na potência máxima
+      path.style.animationDuration = durationS.toFixed(2) + "s";
+    } else {
+      path.style.animationDuration = "";
+    }
+    animateNumberTo("cable-power", allocatedKw, (v) => v.toFixed(2) + " kW");
+  }
+
   function levelClass(level) {
     return level === "critical" ? "level-critical" : level === "warning" ? "level-warning" : "";
   }
@@ -288,6 +311,7 @@
     if (ring) ring.setAttribute("stroke-dashoffset", (RING_CIRCUMFERENCE * (1 - frac)).toFixed(2));
 
     animateNumberTo("ring-kw", c.allocated_kw, (v) => v.toFixed(2));
+    updateCableAnimation(c.allocated_kw, maxKw);
 
     const energy = c.energy_kwh || 0;
     animateNumberTo("stat-energy", energy, (v) => v.toFixed(3) + " kWh");

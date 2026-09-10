@@ -13,8 +13,9 @@
   fornecida, só é importada/chamada, nunca reescrita.
 - Sem banco de dados: `client_store.py` (contas), e os dicts em
   `main.py` (`payment_status`, `sim_flags`, `charging_goals`,
-  `client_active_charger`, `last_receipt`, `pix_pending`) guardam tudo
-  em memória, de propósito — é uma demo single-process.
+  `client_active_charger`, `last_receipt`, `pix_pending`,
+  `session_qr_tokens`) guardam tudo em memória, de propósito — é uma
+  demo single-process.
 - Stack: FastAPI + Jinja2 + HTMX + WebSocket (`/ws`) + CSS puro. JS
   manual só em `static/app.js` (WebSocket, animações SVG, clipboard do
   Pix) — lógica de negócio sempre no servidor.
@@ -23,7 +24,247 @@
 
 ---
 
-## Estado atual (última atualização: 2026-09-04)
+## Estado atual (última atualização: 2026-09-10)
+
+### Investigação: QR do PAGAMENTO Pix não aparece (não é regressão do P1)
+
+Reportado depois do P1: `CLIENT_PIX_CREATED` loga sem erro, mas a tela
+`/cliente/carregar/pix` fica travada em "Gerando QR code…" / "Gerando
+código Pix…". Hipótese inicial (do relato) era colisão de nome de
+campo entre o QR do Pix (`qr_code`/`qr_code_base64`, em `pix_pending`)
+e o QR novo de handoff do P1 (`qr_base64`, só no contexto do template
+`carregar_iniciada.html`).
+
+**Investigado e descartado, nesta ordem:**
+1. `git diff` do commit pré-P0 até o estado atual, filtrando por
+   qualquer nome ligado a QR: os dois recursos usam chaves/variáveis
+   completamente distintas (`qr_code`/`qr_code_base64` em
+   `pix_pending` vs. `qr_base64` só em `carregar_iniciada.html`) — zero
+   sobreposição de nome.
+2. `carregar_pix.html`/`pix_status.html` (o QR de pagamento) não foram
+   tocados em nenhuma linha pelo P0 ou pelo P1 — só `carregar_iniciada.html`
+   (handoff) mudou.
+3. `backend/payments.py` está byte-a-byte idêntico desde antes do P0
+   (`git diff e70812a -- backend/payments.py` vazio) — o payload
+   enviado ao Mercado Pago não mudou.
+
+**Causa raiz real, confirmada chamando `payments.create_pix_charge()` /
+`get_charge_status()` DIRETO em Python (fora do FastAPI, sem HTTP, sem
+JS) — ou seja, é o Mercado Pago mesmo que nunca manda o QR:**
+o pedido é criado (201) só que com `status: "processing"` /
+`status_detail: "in_process"` e **fica travado nesse estado
+indefinidamente** (esperado até 90s+, sem transicionar) — bem diferente
+do documentado na sessão anterior (`action_required`/`waiting_transfer`
+→ `processed`/`accredited` em poucos segundos via o payer
+`first_name="APRO"`). Sem transição de status, `transactions.payments[0].payment_method`
+nunca ganha `qr_code`/`qr_code_base64` — o campo simplesmente não existe
+na resposta do pedido, em nenhuma tentativa (testado com pedidos novos
+também, não é um pedido "azarado"). Confirmado que não é problema de
+credencial (`GET /users/me` continua `test_user: true`, conta ativa) nem
+de schema (o `id` de pagamento aninhado em `transactions.payments[0].id`
+devolve 404 em `GET /v1/payments/{id}` — não é um recurso alternativo
+consultável). Tudo indica uma mudança de comportamento do lado do
+sandbox do Mercado Pago (a simulação via `payer.first_name="APRO"` para
+a Orders API parece não estar mais resolvendo como antes) — não uma
+regressão de código do ChargeGrid.
+
+**Nenhuma mudança de código feita** — não havia bug pra corrigir no
+lado do ChargeGrid; o timeout de ~5 min já implementado no P0 (P0-8,
+`PIX_TIMEOUT_S`) já cobre esse cenário de forma correta (o totem volta
+sozinho com "tempo esgotado" em vez de ficar travado pra sempre). Pro
+dia da demo, se isso persistir: `PAYMENT_MODE=mock` continua sendo o
+plano de contingência documentado (ver seção "Como aprovar o Pix em
+sandbox" abaixo) — o fluxo completo (cadastro → veículo → meta →
+resumo → pagar → confirmação com QR de handoff → login no
+celular) foi reconfirmado funcionando 100% nesse modo depois desta
+investigação. Vale reinvestigar o lado do Mercado Pago (painel de
+desenvolvedor / suporte) se o Pix real for indispensável pra
+apresentação.
+
+### Rodada P1 — animação do cabo + QR de acompanhamento (2026-09-10)
+
+Implementados os dois itens de P1, depois de P0 100% testado.
+Nenhuma biblioteca de animação nova; nenhuma API externa de QR code.
+
+**P1-1 — Animação 2D do cabo carregando:** `partials/cable_animation.html`
+(SVG + CSS, mesma técnica do `bus-fill`/`node-pulse` já existentes —
+`stroke-dasharray`/`stroke-dashoffset` animado via `@keyframes
+cable-flow`). Reaproveitado em dois lugares:
+- `/cliente/carregando` — renderizado no servidor no load inicial
+  (`allocated_kw`/`max_kw` do charger) e mantido vivo via WebSocket
+  (`app.js` → `updateCableAnimation()`, chamada de dentro de
+  `renderCliente()`), igual ao padrão já usado pro `ring-fill`.
+- Drawer de detalhe do carregador no Dashboard (`charger_details.html`),
+  só quando `status == OCUPADO` — como esse drawer já é
+  re-renderizado inteiro pelo servidor a cada poll htmx, não precisou
+  de nenhum JS novo ali, só incluir o partial com `c.allocated_kw`/`c.max_kw`.
+
+Velocidade do pulso: `duration_s = 2.2 - frac*1.7` (`frac =
+allocated_kw/max_kw`) — mais potência, ciclo mais curto/rápido. Some
+(`animation` removida) quando `allocated_kw <= 0`. `prefers-reduced-motion`
+já era coberto pela regra global existente em `style.css`
+(`animation-duration: 0.001ms !important` em `*`); adicionada também a
+mesma linha explícita `.cable-path.active { animation: none; }` que já
+existia pros nós do unifilar, por consistência.
+
+**P1-2 — QR code de acompanhamento no totem:** `qrcode[pil]==8.0`
+adicionado ao `requirements.txt` (`pip install qrcode[pil]`) — QR
+gerado no servidor (`main.py::generate_qr_base64`, `qrcode.make()` +
+PNG em base64), embutido direto no HTML de
+`/cliente/carregar/iniciada` (mesmo padrão `data:image/png;base64,...`
+já usado pro QR do Pix) — nenhuma API externa, nenhum CDN novo.
+
+Token de acesso temporário e de uso único: `session_qr_tokens: dict[token
+-> {cpf, expires_at}]`, novo dict em memória (mesmo padrão dos outros —
+adicionar à lista de "sem banco de dados" nas Regras fixas). Emitido em
+`_issue_session_qr_url()` (`secrets.token_urlsafe(24)`, TTL de 10 min via
+`SESSION_QR_TTL_S`, com limpeza preguiçosa de tokens expirados a cada
+emissão). Nova rota `GET /cliente/sessao/{token}`: dá `.pop()` no token
+JÁ NA LEITURA (garante uso único mesmo expirado/reenviado), valida
+expiração, e só então estabelece uma sessão de login de verdade
+(`client_store.start_session`) e redireciona pro destino certo
+(`_post_login_destination` — cai em `/cliente/carregando` na prática,
+já que o QR só existe enquanto há uma sessão ativa). Login manual
+continua funcionando normalmente, sem nenhuma mudança — o QR é só um
+atalho a mais.
+
+**Testado nesta sessão** (`PAYMENT_MODE=mock`, via curl, com um log
+temporário removido depois do teste pra capturar a URL do QR sem
+precisar decodificar a imagem): (1) animação do cabo ativa a 22 kW
+(`duration ≈ 0.50s`), caiu a 19 kW e ficou mais lenta (`≈0.73s`) ao
+forçar 5 sessões simultâneas (congestionamento real via
+`_redistribute_power`), voltou ao normal ao liberar — confirmando que
+reage à potência de verdade, não a um valor fixo; (2) sessão "celular"
+nova (cookies zerados) abrindo a URL do QR caiu direto em
+`/cliente/carregando`, sem tela de login; (3) reabrir a mesma URL de
+outra sessão devolveu `303 → /cliente/login` (token já consumido); (4)
+login manual (CPF/senha certos e errados) continua idêntico a antes.
+
+### P1 — pendências
+
+Nenhuma — os dois itens de P1 do escopo combinado (animação do cabo +
+QR de acompanhamento) foram implementados e testados nesta rodada.
+Falta só validação visual no navegador (a bateria de testes acima foi
+via curl, cobre a lógica do servidor, não a legibilidade/UX real da
+animação e do QR).
+
+---
+
+### Rodada P0 — Totem inicia, celular acompanha (2026-09-10)
+
+Implementado o fluxo completo pedido: o Totem deixa de acompanhar a
+recarga (isso era feito em `/cliente/carregando`, que agora vive
+independente do totem) e passa só a iniciar a sessão, confirmar e
+voltar sozinho ao login — o acompanhamento em tempo real passa a
+acontecer por login em qualquer dispositivo (celular do cliente
+incluído), na mesma aplicação web. Nenhuma mudança em
+`backend/demand_controller.py`; nenhum loop/ticker novo — tudo estendeu
+o `ticker_loop()` e o WebSocket que já existiam.
+
+**P0-1 — Veículos por conta:** `client_store.py` ganhou
+`veiculos_cadastrados: [{modelo, placa}]` por conta, com
+`add_vehicle()`/`list_vehicles()`. Em `/cliente/carregar`, o cliente
+escolhe um veículo já cadastrado num `<select>`, ou cadastra um novo
+inline (campos aparecem via CSS `:has()`, mesma técnica já usada em
+`.pay-option` — sem JS novo). Contas sem nenhum veículo pulam direto
+pros campos de cadastro, sem etapa de perfil separada.
+
+**P0-2 — Meta por tempo (padrão) ou energia:** `estimate_charge()`
+agora recebe `(charger_id, goal_type, valor)` e espelha o cálculo nas
+duas direções — `goal_type="tempo"` (padrão, 30 min pré-selecionado)
+projeta energia/custo; `goal_type="energia"` mantém o cálculo antigo
+inalterado. `charging_goals`/`pix_pending` guardam `goal_type` +
+`target_min`/`target_kwh` — o campo relevante é sempre o valor EXATO
+escolhido pelo cliente (nunca a projeção estimada do outro campo, que
+é só para exibição). `/estimate` (JSON) aceita `modo`/`valor`.
+
+**P0-3 — Totem: confirmação curta + logout automático:** nova tela
+`/cliente/carregar/iniciada` ("Recarga iniciada! Acompanhe pelo
+celular.") substitui o redirect antigo para `/cliente/carregando` nos
+dois modos de pagamento (mock e mercadopago). Contagem regressiva em
+`app.js` (`scheduleAutoLogout`, ~6s) submete um form oculto para
+`/cliente/logout` e volta pro login sozinha — sem depender do cliente
+clicar em "sair".
+
+**P0-4 — Acompanhamento via login:** login e cadastro (`_post_login_destination`)
+redirecionam para `/cliente/carregando` em vez de `/cliente/home`
+quando a conta já tem sessão ativa. `carregando.html` ganhou um link
+"← Início" — não prende mais o cliente na tela.
+
+**P0-5 — Encerramento automático por meta atingida:** `ticker_loop()`
+chama `_check_goals_and_autodisconnect()` a cada tick (1s), que
+verifica cada sessão ativa contra sua meta (`duration_minutes()` ou
+`energy_consumed_kwh`) e chama `vehicle_disconnect()` sozinho quando
+atingida, gravando `last_receipt[...]["completed_reason"] =
+"meta_atingida"`. Idempotente nos dois sentidos: se o cliente clica
+"encerrar" quase ao mesmo tempo, `vehicle_disconnect()` retorna erro
+(ignorado em silêncio) ou, se o ticker já encerrou primeiro, o handler
+de encerrar manual redireciona pro recibo já pronto em vez de tratar
+como falha. `conclusao.html` mostra "encerrada automaticamente" vs
+"encerrada manualmente por você".
+
+**P0-6 — Uma sessão ativa por conta (dois pontos de entrada):** além do
+redirect em `/cliente/carregar` (GET), o guard foi repetido em
+`/cliente/carregar/resumo` e `/cliente/carregar/pagar` (POST) — defesa
+em profundidade contra o cliente forçar o fluxo por outro caminho
+enquanto já tem uma recarga em andamento. Todos redirecionam para
+`/cliente/carregando?aviso=ja_ativa`, que mostra "Você já tem uma
+recarga em andamento."
+
+**P0-7 — Sem vagas disponíveis:** já existia (`{% else %}` em
+`carregar_config.html`) e continua funcionando com os campos novos.
+
+**P0-8 — Timeout do Pix (~5 min):** `pix_pending[...]["created_at"]` +
+`PIX_TIMEOUT_S`. Checado no polling (`/cliente/carregar/pix/status`) e
+também no `GET /cliente/carregar/pix` (caso o cliente recarregue a
+tela depois do prazo sem o polling ter rodado) — em ambos os casos
+limpa `pix_pending` e redireciona pro totem com "tempo esgotado, tente
+novamente". Não cancela nada do lado do Mercado Pago, só desiste de
+esperar.
+
+**P0-9 — Ação de emergência no Dashboard:** mantida sem alteração —
+continua em `partials/charger_details.html` / `POST /disconnect`.
+
+**P0-10 — Casca de navegação do Dashboard:** `/` virou "Visão Geral"
+(resumo — utilização + faturamento do momento, sem a grid detalhada).
+A grid/tabela detalhada de 12 carregadores (com o drawer de detalhes e
+a ação de emergência) mudou de `/` para `/dashboard/carregadores`.
+Novas páginas simples, todas reaproveitando estado existente sem motor
+de analytics novo: `/dashboard/clientes` (lista de `client_store.accounts`),
+`/dashboard/historico` (`completed_sessions_payload()` completo),
+`/dashboard/relatorios` (3 números agregados de `billing_snapshot()`),
+`/dashboard/configuracoes` (somente leitura: tarifa, `PAYMENT_MODE`).
+Nav compartilhado em `partials/dash_nav.html`.
+
+**Limitação conhecida documentada (não resolvida nesta rodada):**
+existe uma janela de corrida teórica entre dois clientes escolhendo a
+mesma vaga livre antes do pagamento confirmar (comentários no código em
+`/cliente/carregar/resumo` e `/cliente/carregar/pagar`, perto das
+checagens de `is_occupied`). Numa demo single-process o risco é
+mínimo; resolver de verdade exigiria uma "reserva" da vaga no momento
+da escolha, não só na confirmação.
+
+**Testado nesta sessão** (`PAYMENT_MODE=mock`, via curl): cadastro →
+cadastro de veículo inline → meta por tempo → resumo → pagar → tela de
+confirmação → login de novo redireciona pro acompanhamento →
+"carregar" bloqueado com aviso enquanto ativo → encerrar manual +
+segunda tentativa idempotente → meta de energia minúscula encerrada
+sozinha pelo ticker com o motivo certo no recibo → estado "sem vagas"
+com os 12 carregadores ocupados → botão de emergência do operador
+continua funcionando → as 6 páginas do dashboard renderizam e refletem
+dados reais (`/dashboard/clientes` e `/dashboard/historico` mostram as
+contas/sessões criadas no teste). Fluxo `PAYMENT_MODE=mercadopago`
+(Pix real) não foi reexecutado nesta rodada — a lógica de timeout foi
+revisada por leitura, não testada ao vivo (exigiria esperar ~5 min).
+
+### P1 — não implementado nesta rodada (como pedido)
+
+Animação 2D do cabo carregando (SVG/CSS) e QR code na tela de
+confirmação do totem ficam para depois — só depois de P0 100% testado
+em ambiente real (a demo por curl acima cobre a lógica do servidor,
+não substitui testar no navegador).
+
+---
 
 ### Credenciais de teste — Mercado Pago (sandbox)
 

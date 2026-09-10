@@ -22,6 +22,14 @@
       <div class="row"><span>Vaga</span><span class="val">{{ charger_id }} — {{ location }}</span></div>
     </div>
 
+    <!-- P1-2: QR abre o acompanhamento direto no celular, com um token de
+         uso único (ver /cliente/sessao/{token} em main.py) — não precisa
+         digitar CPF/senha de novo. Login manual continua funcionando normalmente. -->
+    <div class="pix-qr-wrap">
+      <img class="pix-qr" src="data:image/png;base64,{{ qr_base64 }}" alt="QR code para abrir o acompanhamento no celular">
+    </div>
+    <p class="cliente-establishment">Escaneie para acompanhar no celular — link de uso único, válido por 10 min.</p>
+
     <div class="banner-info" id="logout-countdown">
       Este totem é compartilhado — saindo da sua conta em <span id="countdown-n" class="mono">6</span>s…
     </div>

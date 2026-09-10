@@ -284,6 +284,30 @@ button.primary:hover { background: var(--goodwe-red-deep); border-color: var(--g
   50% { filter: drop-shadow(0 0 6px rgba(255,0,0,0.55)); }
 }
 
+/* P1-1 — animação 2D do "cabo carregando" (mesma técnica do bus-fill /
+   node-pulse acima: SVG + CSS, sem biblioteca nova). Reaproveitada na
+   tela do cliente (carregando.html) e no drawer de detalhe do
+   dashboard (charger_details.html) quando o carregador está OCUPADO. */
+.cable-anim-wrap { display: flex; flex-direction: column; align-items: center; gap: 0.35rem; margin: 0.75rem 0 1.1rem; }
+.cable-anim-wrap svg { width: 100%; max-width: 260px; height: auto; display: block; }
+.cable-charger-icon rect, .cable-car-icon rect, .cable-car-icon circle {
+  fill: var(--surface-2);
+  stroke: var(--ink-mid);
+  stroke-width: 1.5;
+}
+.cable-charger-icon .cable-icon-detail { fill: var(--ink-low); stroke: none; }
+
+.cable-path { fill: none; stroke: var(--line); stroke-width: 3; stroke-linecap: round; }
+.cable-path.active {
+  stroke: var(--goodwe-red);
+  stroke-dasharray: 9 7;
+  animation: cable-flow 1.6s linear infinite;
+}
+@keyframes cable-flow {
+  to { stroke-dashoffset: -32; }
+}
+.cable-power-label { font-size: 0.78rem; color: var(--ink-mid); }
+
 .node-label {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -918,4 +942,5 @@ input:focus, select:focus { border-color: var(--goodwe-red); outline: none; }
     transition-duration: 0.001ms !important;
   }
   .node.occupied.pulse, .node.fault.pulse { animation: none; }
+  .cable-path.active { animation: none; }
 }
