@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChargeGrid — Recarga iniciada</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="cliente-screen">
+
+  <main class="cliente-card">
+    <div class="cliente-brand">⚡ ChargeGrid</div>
+    <div class="receipt-icon">✅</div>
+    <h1>Recarga iniciada!</h1>
+    <p class="cliente-establishment">Acompanhe pelo celular — faça login com sua conta.</p>
+
+    <div class="summary-list">
+      <div class="row"><span>Veículo</span><span class="val">{{ placa }}</span></div>
+      <div class="row"><span>Vaga</span><span class="val">{{ charger_id }} — {{ location }}</span></div>
+    </div>
+
+    <div class="banner-info" id="logout-countdown">
+      Este totem é compartilhado — saindo da sua conta em <span id="countdown-n" class="mono">6</span>s…
+    </div>
+
+    <!-- Auto-logout (P0-3): submetido por app.js depois da contagem, sem
+         depender do cliente lembrar de clicar em "sair". -->
+    <form id="auto-logout-form" method="post" action="/cliente/logout" style="display:none;"></form>
+  </main>
+
+  <script src="/static/app.js"></script>
+  <script>ChargeGrid.init({ page: "confirmacao", autoLogoutSeconds: 6 });</script>
+</body>
+</html>

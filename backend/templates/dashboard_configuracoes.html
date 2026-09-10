@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChargeGrid Intelligence — Configurações</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://unpkg.com/htmx.org@1.9.12"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="dashboard" hx-headers='{}'>
+
+  <header class="dash-header">
+    <div class="brand">
+      <h1>⚡ ChargeGrid Intelligence</h1>
+    </div>
+  </header>
+
+  {% include "partials/dash_nav.html" %}
+
+  <section class="panel" aria-labelledby="h-config">
+    <h2 id="h-config"><i data-lucide="settings" class="panel-icon" aria-hidden="true"></i>Configurações</h2>
+    <p style="color:var(--ink-mid); font-size:0.85rem; margin-top:-0.4rem;">Somente leitura por enquanto.</p>
+    <div class="billing-row"><span>Tarifa vigente</span><span class="val">{{ tariff|brl }}/kWh</span></div>
+    <div class="billing-row"><span>Modo de pagamento (PAYMENT_MODE)</span><span class="val mono">{{ payment_mode }}</span></div>
+  </section>
+
+  {% include "partials/chat_widget.html" %}
+
+  <script src="/static/app.js"></script>
+  <script>ChargeGrid.init({ page: "dashboard" });</script>
+</body>
+</html>

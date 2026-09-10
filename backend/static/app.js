@@ -269,13 +269,16 @@
     const occupied = c.status === "OCUPADO";
     const maxKw = parseFloat(document.body.dataset.maxKw) || c.max_kw || 1;
     const tariff = parseFloat(document.body.dataset.tariff) || 4.26;
+    const goalType = document.body.dataset.goalType || ""; // "tempo" | "energia" | "" (tela de vaga não autenticada)
     const targetKwh = parseFloat(document.body.dataset.targetKwh);
+    const targetMin = parseFloat(document.body.dataset.targetMin);
 
-    // Tela autenticada de "carregando" (data-target-kwh presente): se a vaga
-    // deixou de estar ocupada (ex.: operador forçou parada pelo Dashboard),
-    // não há mais nada pra mostrar aqui — volta pro servidor, que decide
-    // pra onde mandar o cliente (home).
-    if (!Number.isNaN(targetKwh) && !occupied) {
+    // Tela autenticada de "carregando" (data-goal-type presente): se a vaga
+    // deixou de estar ocupada (ex.: operador forçou parada pelo Dashboard,
+    // ou a meta foi atingida e o ticker encerrou sozinho), não há mais nada
+    // pra mostrar aqui — volta pro servidor, que decide pra onde mandar o
+    // cliente (home ou tela de conclusão).
+    if (goalType && !occupied) {
       location.href = "/cliente/carregando";
       return;
     }
@@ -292,20 +295,46 @@
     animateNumberTo("stat-cost", energy * tariff, formatBRL);
 
     if ($("stat-remaining")) {
-      const remainingKwh = Math.max(0, targetKwh - energy);
-      if (c.allocated_kw > 0) {
-        const remainingMin = (remainingKwh / c.allocated_kw) * 60;
+      if (goalType === "tempo") {
+        const remainingMin = Math.max(0, targetMin - (c.duration_min || 0));
         $("stat-remaining").textContent = "~" + Math.round(remainingMin) + " min";
-      } else {
-        $("stat-remaining").textContent = "—";
+      } else if (goalType === "energia") {
+        const remainingKwh = Math.max(0, targetKwh - energy);
+        if (c.allocated_kw > 0) {
+          $("stat-remaining").textContent = "~" + Math.round((remainingKwh / c.allocated_kw) * 60) + " min";
+        } else {
+          $("stat-remaining").textContent = "—";
+        }
       }
     }
 
     const statusEl = $("cliente-status");
     if (statusEl) {
       statusEl.className = "cliente-status " + (occupied ? "ocupado" : "livre");
-      statusEl.textContent = occupied ? (targetKwh ? "Carregando" : "Recarga em andamento") : "Vaga livre · aguardando veículo";
+      statusEl.textContent = occupied ? (goalType ? "Carregando" : "Recarga em andamento") : "Vaga livre · aguardando veículo";
     }
+  }
+
+  // ------------------------------------------------------------------
+  // Tela de confirmação do totem (P0-3) — conta regressiva pura em JS
+  // (sem lógica de negócio: só decide QUANDO submeter o form de logout,
+  // quem realmente encerra a sessão é sempre o servidor).
+  // ------------------------------------------------------------------
+
+  function scheduleAutoLogout(seconds) {
+    let remaining = seconds;
+    const tick = () => {
+      const el = $("countdown-n");
+      if (el) el.textContent = String(Math.max(0, remaining));
+      if (remaining <= 0) {
+        const form = $("auto-logout-form");
+        if (form) form.submit();
+        return;
+      }
+      remaining -= 1;
+      setTimeout(tick, 1000);
+    };
+    tick();
   }
 
   // ------------------------------------------------------------------
@@ -352,6 +381,10 @@
       const closeBtn = $("chat-close");
       if (closeBtn) closeBtn.addEventListener("click", () => toggleChat(false));
       if (window.lucide) lucide.createIcons();
+      if (cfg.page === "confirmacao") {
+        scheduleAutoLogout(cfg.autoLogoutSeconds || 6);
+        return; // tela de confirmação não abre WebSocket — não há mais nada pra acompanhar aqui
+      }
       connect();
     },
     showDetails,

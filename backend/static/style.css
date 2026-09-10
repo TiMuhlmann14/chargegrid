@@ -160,6 +160,30 @@ button.primary:hover { background: var(--goodwe-red-deep); border-color: var(--g
   font-size: 0.9rem;
 }
 
+/* P0-10 — casca de navegação do dashboard (Visão Geral / Carregadores /
+   Clientes / Histórico / Relatórios / Configurações) */
+.dash-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 1.75rem;
+}
+.dash-nav a {
+  padding: 0.5rem 0.9rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--ink-mid);
+  text-decoration: none;
+  border: 1px solid transparent;
+}
+.dash-nav a:hover { background: var(--surface-2); }
+.dash-nav a.active {
+  color: var(--goodwe-red-deep);
+  background: rgba(255,0,0,0.06);
+  border-color: rgba(255,0,0,0.15);
+}
+
 .clock {
   font-size: 0.85rem;
   color: var(--ink-low);
@@ -778,6 +802,16 @@ input:focus, select:focus { border-color: var(--goodwe-red); outline: none; }
 .pay-option:has(input:checked) { border-color: var(--goodwe-red); background: rgba(255,0,0,0.04); }
 .pay-option input { width: auto; margin: 0; }
 .pay-option .pay-label { font-weight: 500; font-size: 0.9rem; }
+
+/* P0-1 (veículo cadastrado inline) e P0-2 (meta por tempo OU energia) —
+   mostra/esconde os campos certos com :has(), sem nenhum JS novo (mesma
+   técnica já usada em .pay-option acima). */
+.novo-veiculo-fields { display: none; }
+.veiculo-select-field:has(#placa option[value="__novo__"]:checked) ~ .novo-veiculo-fields { display: flex; flex-direction: column; gap: 0.5rem; }
+
+.goal-field-energia { display: none; }
+.goal-mode-wrap:has(#modo-energia:checked) ~ .goal-field-tempo { display: none; }
+.goal-mode-wrap:has(#modo-energia:checked) ~ .goal-field-energia { display: flex; }
 
 .wizard-actions { display: flex; gap: 0.6rem; margin-top: 1.25rem; }
 .wizard-actions button, .wizard-actions a.btn-link {

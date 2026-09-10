@@ -25,6 +25,12 @@
       <div class="row"><span>Valor total</span><span class="val">{{ r.revenue_rs|brl }}</span></div>
     </div>
 
+    {% if r.completed_reason == "meta_atingida" %}
+    <div class="banner-info">✓ Encerrada automaticamente — meta atingida.</div>
+    {% else %}
+    <div class="banner-info">Encerrada manualmente por você.</div>
+    {% endif %}
+
     <div class="wizard-actions">
       <a class="btn-link primary" href="/cliente/home">Voltar ao início</a>
     </div>

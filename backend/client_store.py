@@ -40,6 +40,7 @@ def create_account(nome: str, cpf: str, email: str, senha: str) -> dict:
         "email": email.strip(),
         "senha": senha,  # plaintext — demo, sem segurança real (definido com o usuário)
         "veiculos": [],  # placas já usadas por essa conta, para o histórico (P1)
+        "veiculos_cadastrados": [],  # [{modelo, placa}] cadastrados pela conta (P0-1)
     }
     accounts[cpf_norm] = account
     return account
@@ -76,3 +77,34 @@ def register_vehicle(cpf: str, plate: str) -> None:
     account = accounts.get(normalize_cpf(cpf))
     if account and plate and plate not in account["veiculos"]:
         account["veiculos"].append(plate)
+
+
+def list_vehicles(cpf: str) -> list[dict]:
+    """Veículos cadastrados (modelo + placa) da conta — para a tela de
+    'carregar veículo' oferecer seleção em vez de digitar a placa toda
+    vez (P0-1)."""
+    account = accounts.get(normalize_cpf(cpf))
+    return list(account["veiculos_cadastrados"]) if account else []
+
+
+def add_vehicle(cpf: str, modelo: str, placa: str) -> dict | None:
+    """
+    Cadastra um veículo (modelo + placa) na conta, inline na tela de
+    'carregar veículo' (sem forçar uma etapa de perfil separada). Dedup
+    por placa — cadastrar de novo a mesma placa só devolve a existente.
+    Também chama register_vehicle() para manter a lista usada pelo
+    histórico (P1) em sincronia, sem duplicar esse conceito.
+    """
+    account = accounts.get(normalize_cpf(cpf))
+    if not account:
+        return None
+    placa = (placa or "").strip().upper()
+    if not placa:
+        return None
+    existing = next((v for v in account["veiculos_cadastrados"] if v["placa"] == placa), None)
+    if existing:
+        return existing
+    vehicle = {"modelo": (modelo or "").strip() or "Veículo", "placa": placa}
+    account["veiculos_cadastrados"].append(vehicle)
+    register_vehicle(cpf, placa)
+    return vehicle

@@ -11,12 +11,17 @@
 <script src="https://unpkg.com/htmx.org@1.9.12"></script>
 <script src="https://unpkg.com/lucide@latest"></script>
 </head>
-<body class="cliente-screen" data-charger-id="{{ charger.id }}" data-max-kw="{{ charger.max_kw }}" data-tariff="{{ tariff }}" data-target-kwh="{{ target_kwh }}">
+<body class="cliente-screen" data-charger-id="{{ charger.id }}" data-max-kw="{{ charger.max_kw }}" data-tariff="{{ tariff }}"
+      data-goal-type="{{ goal.goal_type }}" data-target-kwh="{{ goal.target_kwh if goal.target_kwh is not none else '' }}"
+      data-target-min="{{ goal.target_min if goal.target_min is not none else '' }}">
 
   <main class="cliente-card">
     <div class="cliente-brand">⚡ ChargeGrid</div>
+    <div class="link-row"><a href="/cliente/home">← Início</a></div>
     <div class="cliente-establishment">{{ site }}</div>
     <h1><span class="vaga">{{ charger.location }}</span> · <span class="mono">{{ charger.id }}</span></h1>
+
+    {% if aviso %}<div class="banner-warning">{{ aviso }}</div>{% endif %}
 
     <div class="ring-wrap">
       {% set r = 90 %}
@@ -41,14 +46,22 @@
     <div class="cliente-stats">
       <div class="stat-row"><span class="label">Energia consumida</span><span class="val" id="stat-energy">{{ '%.3f'|format(charger.energy_kwh or 0) }} kWh</span></div>
       <div class="stat-row"><span class="label">Tempo decorrido</span><span class="val" id="stat-time">{{ '%02d:%02d:%02d'|format(((charger.duration_min or 0)*60)//3600, (((charger.duration_min or 0)*60)%3600)//60, ((charger.duration_min or 0)*60)%60) }}</span></div>
-      <div class="stat-row"><span class="label">Tempo restante (estimado)</span><span class="val" id="stat-remaining">
-        {% set remaining_kwh = [target_kwh - (charger.energy_kwh or 0), 0] | max %}
-        {% if charger.allocated_kw and charger.allocated_kw > 0 %}~{{ '%.0f'|format(remaining_kwh / charger.allocated_kw * 60) }} min{% else %}—{% endif %}
+      <div class="stat-row"><span class="label">{{ "Tempo restante (meta)" if goal.goal_type == "tempo" else "Tempo restante (estimado)" }}</span><span class="val" id="stat-remaining">
+        {% if goal.goal_type == "tempo" %}
+          {% set remaining_min = [goal.target_min - (charger.duration_min or 0), 0] | max %}
+          ~{{ '%.0f'|format(remaining_min) }} min
+        {% else %}
+          {% set remaining_kwh = [(goal.target_kwh or 0) - (charger.energy_kwh or 0), 0] | max %}
+          {% if charger.allocated_kw and charger.allocated_kw > 0 %}~{{ '%.0f'|format(remaining_kwh / charger.allocated_kw * 60) }} min{% else %}—{% endif %}
+        {% endif %}
       </span></div>
       <div class="stat-row"><span class="label">Tarifa vigente</span><span class="val" id="stat-tariff">{{ tariff|brl }}/kWh</span></div>
       <div class="stat-row"><span class="label">Valor parcial</span><span class="val" id="stat-cost">{{ ((charger.energy_kwh or 0) * tariff)|brl }}</span></div>
     </div>
-    <div class="banner-info">Meta desta recarga: {{ '%.1f'|format(target_kwh) }} kWh. Tempo restante é estimativa e muda se a potência entregue mudar.</div>
+    <div class="banner-info">
+      Meta desta recarga: {% if goal.goal_type == "tempo" %}{{ '%.0f'|format(goal.target_min) }} minutos{% else %}{{ '%.1f'|format(goal.target_kwh) }} kWh{% endif %}
+      — ao atingir a meta, a recarga é encerrada automaticamente.
+    </div>
 
     <form method="post" action="/cliente/carregando/encerrar">
       <button type="submit" class="primary" style="width:100%">Encerrar recarga e pagar</button>

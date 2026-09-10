@@ -19,10 +19,36 @@
 
     {% if free_chargers %}
     <form method="post" action="/cliente/carregar/resumo" class="wizard-form">
-      <div class="form-field">
-        <label for="placa">Placa do veículo</label>
-        <input type="text" id="placa" name="placa" required value="{{ form.placa }}" placeholder="ABC-1D23" autofocus>
+
+      {% if vehicles %}
+      <div class="form-field veiculo-select-field">
+        <label for="placa">Veículo</label>
+        <select id="placa" name="placa" required>
+          <option value="" disabled {{ 'selected' if not form.placa else '' }}>Escolha um veículo</option>
+          {% for v in vehicles %}
+          <option value="{{ v.placa }}" {{ 'selected' if form.placa == v.placa else '' }}>{{ v.modelo }} — {{ v.placa }}</option>
+          {% endfor %}
+          <option value="__novo__" {{ 'selected' if form.placa == '__novo__' else '' }}>+ Cadastrar novo veículo</option>
+        </select>
       </div>
+      <div class="form-field novo-veiculo-fields">
+        <label for="novo_modelo">Modelo do novo veículo</label>
+        <input type="text" id="novo_modelo" name="novo_modelo" required value="{{ form.novo_modelo }}" placeholder="Ex.: Renault Kwid">
+        <label for="novo_placa" style="margin-top:0.6rem;">Placa</label>
+        <input type="text" id="novo_placa" name="novo_placa" required value="{{ form.novo_placa }}" placeholder="ABC-1D23">
+      </div>
+      {% else %}
+      <input type="hidden" name="placa" value="__novo__">
+      <div class="form-field">
+        <label for="novo_modelo">Modelo do veículo</label>
+        <input type="text" id="novo_modelo" name="novo_modelo" required value="{{ form.novo_modelo }}" placeholder="Ex.: Renault Kwid">
+      </div>
+      <div class="form-field">
+        <label for="novo_placa">Placa</label>
+        <input type="text" id="novo_placa" name="novo_placa" required value="{{ form.novo_placa }}" placeholder="ABC-1D23">
+      </div>
+      {% endif %}
+
       <div class="form-field">
         <label for="charger_id">Vaga</label>
         <select id="charger_id" name="charger_id" required>
@@ -32,10 +58,29 @@
           {% endfor %}
         </select>
       </div>
-      <div class="form-field">
-        <label for="energia_kwh">Energia desejada (kWh)</label>
-        <input type="number" id="energia_kwh" name="energia_kwh" required min="1" step="0.5" value="{{ form.energia_kwh }}" placeholder="Ex.: 20">
+
+      <div class="form-field goal-mode-wrap">
+        <label>Meta da recarga</label>
+        <div class="pay-options">
+          <label class="pay-option">
+            <input type="radio" name="modo" value="tempo" id="modo-tempo" {{ 'checked' if form.modo != 'energia' else '' }}>
+            <span class="pay-label">⏱️ Por tempo</span>
+          </label>
+          <label class="pay-option">
+            <input type="radio" name="modo" value="energia" id="modo-energia" {{ 'checked' if form.modo == 'energia' else '' }}>
+            <span class="pay-label">🔋 Por energia</span>
+          </label>
+        </div>
       </div>
+      <div class="form-field goal-field-tempo">
+        <label for="minutos">Tempo desejado (min)</label>
+        <input type="number" id="minutos" name="minutos" required min="5" step="5" value="{{ form.minutos or 30 }}">
+      </div>
+      <div class="form-field goal-field-energia">
+        <label for="energia_kwh">Energia desejada (kWh)</label>
+        <input type="number" id="energia_kwh" name="energia_kwh" required min="1" step="0.5" value="{{ form.energia_kwh or 15 }}">
+      </div>
+
       <button type="submit" class="primary">Continuar</button>
     </form>
     {% else %}

@@ -96,13 +96,19 @@ sim_flags: dict[str, str | None] = {}
 
 # ----------------------------------------------------------------------
 # Camada do fluxo do cliente (login → carregar → pagar) — também fora do
-# DemandController, pelo mesmo motivo: são dados de UI/demo (meta de kWh
+# DemandController, pelo mesmo motivo: são dados de UI/demo (meta
 # escolhida, qual cliente está em qual carregador), não estado elétrico.
 #
-#   charging_goals:      charger_id -> {"target_kwh", "cpf"} da sessão ativa
+#   charging_goals:      charger_id -> {"goal_type": "tempo"|"energia",
+#                         "target_min", "target_kwh", "cpf"} da sessão ativa
+#                         — target_min/target_kwh é o valor ESCOLHIDO pelo
+#                         cliente no modo correspondente (exato, não
+#                         estimado); o outro campo fica None. O ticker usa
+#                         isso pra saber quando encerrar sozinho (P0-5).
 #   client_active_charger: cpf -> charger_id (para achar "minha recarga")
 #   last_receipt:         cpf -> resumo da última recarga concluída (para a
-#                          tela de conclusão sobreviver a um F5)
+#                          tela de conclusão sobreviver a um F5) — inclui
+#                          "completed_reason": "manual" | "meta_atingida"
 # ----------------------------------------------------------------------
 
 charging_goals: dict[str, dict] = {}
@@ -117,11 +123,14 @@ last_receipt: dict[str, dict] = {}
 # então enquanto o Pix está pendente o carregador nem está OCUPADO
 # ainda — não daria pra guardar isso em charging_goals/client_active_charger.
 #
-#   pix_pending: cpf -> {charger_id, placa, energia_kwh, order_id,
-#                        qr_code, qr_code_base64, valor_rs}
+#   pix_pending: cpf -> {charger_id, placa, goal_type, target_min,
+#                        target_kwh, order_id, qr_code, qr_code_base64,
+#                        valor_rs, created_at}
 # ----------------------------------------------------------------------
 
 pix_pending: dict[str, dict] = {}
+
+PIX_TIMEOUT_S = 5 * 60  # item P0-8: totem volta sozinho se o Pix não confirmar em ~5 min
 
 
 def utilization_level(pct: float) -> str:
@@ -229,6 +238,24 @@ def completed_sessions_payload() -> list[dict]:
     ]
 
 
+def dashboard_clients_payload() -> list[dict]:
+    """Lista de contas cadastradas pro item 'Clientes' do dashboard (P0-10)
+    — reaproveita client_store.py, sem nenhum estado novo."""
+    completed = completed_sessions_payload()
+    rows = []
+    for account in client_store.accounts.values():
+        plates = set(account.get("veiculos", []))
+        n_sessions = sum(1 for s in completed if s["vehicle_id"] in plates)
+        rows.append({
+            "nome": account["nome"],
+            "cpf": account["cpf"],
+            "email": account["email"],
+            "veiculos": account.get("veiculos_cadastrados", []),
+            "n_sessions": n_sessions,
+        })
+    return rows
+
+
 def enrich_charger(c: dict) -> dict:
     """Anexa as flags de demo (fora do DemandController) ao dict de um carregador."""
     c = dict(c)
@@ -255,7 +282,7 @@ def random_plate() -> str:
 # Estimativa de recarga (App do Cliente) — NÃO toca no DemandController
 # ----------------------------------------------------------------------
 
-def estimate_charge(charger_id: str, target_kwh: float) -> dict:
+def estimate_charge(charger_id: str, goal_type: str, valor: float) -> dict:
     """
     Estimativa simples de tempo/custo para uma recarga que AINDA NÃO
     começou, baseada na condição ATUAL da rede (kW ainda disponíveis
@@ -264,26 +291,96 @@ def estimate_charge(charger_id: str, target_kwh: float) -> dict:
     ingênua assumindo potência constante, para dar uma noção ao cliente
     antes de pagar. A tela deixa isso explícito para não parecer uma
     previsão de verdade.
+
+    Espelha o mesmo cálculo nas duas direções (P0-2):
+      - goal_type="tempo": `valor` = minutos desejados → projeta energia/custo.
+      - goal_type="energia": `valor` = kWh desejados → projeta tempo/custo
+        (comportamento original, inalterado).
+
+    IMPORTANTE: o valor de retorno aqui é só para exibição ("energia
+    estimada", "tempo estimado"). A META de verdade que o ticker usa pra
+    encerrar automaticamente (ver charging_goals) é sempre o `valor`
+    exato escolhido pelo cliente no modo escolhido — nunca a projeção do
+    outro campo, que pode mudar se a potência disponível mudar.
     """
     charger = controller.chargers[charger_id]
     estimated_power_kw = round(min(charger.max_kw, max(0.0, controller.available_kw)), 2)
 
-    if estimated_power_kw > 0:
-        estimated_time_min = round((target_kwh / estimated_power_kw) * 60, 1)
+    if goal_type == "tempo":
+        target_min = round(valor, 1)
+        target_kwh = round(estimated_power_kw * target_min / 60, 2) if estimated_power_kw > 0 else None
+        estimated_time_min = target_min
     else:
-        estimated_time_min = None  # rede sem folga agora — não dá pra estimar tempo
+        target_kwh = round(valor, 2)
+        estimated_time_min = round((target_kwh / estimated_power_kw) * 60, 1) if estimated_power_kw > 0 else None
+        target_min = estimated_time_min
+
+    estimated_cost_rs = round(target_kwh * TARIFF_RS_PER_KWH, 2) if target_kwh is not None else None
 
     return {
         "charger_id": charger_id,
-        "target_kwh": round(target_kwh, 2),
+        "goal_type": goal_type,
+        "target_kwh": target_kwh,
+        "target_min": target_min,
         "estimated_power_kw": estimated_power_kw,
         "estimated_time_min": estimated_time_min,
-        "estimated_cost_rs": round(target_kwh * TARIFF_RS_PER_KWH, 2),
+        "estimated_cost_rs": estimated_cost_rs,
     }
 
 
+def _check_goals_and_autodisconnect() -> None:
+    """
+    P0-5: a cada tick, verifica se alguma sessão ativa atingiu a meta
+    contratada (tempo OU energia, conforme escolhido em /cliente/carregar)
+    e, se sim, encerra automaticamente — reaproveita vehicle_disconnect()
+    do DemandController (INTOCÁVEL), nunca duplica a lógica de
+    redistribuição.
+
+    Idempotência: se o cliente clicou "encerrar" manualmente quase ao
+    mesmo tempo, o carregador já não estará mais `is_occupied` (ou
+    charging_goals[charger_id] já não existe mais) quando este loop
+    rodar de novo — o `continue` abaixo ignora esses casos em silêncio,
+    sem chamar vehicle_disconnect() duas vezes.
+    """
+    for charger_id, goal in list(charging_goals.items()):
+        charger = controller.chargers.get(charger_id)
+        if not charger or not charger.is_occupied:
+            continue
+        session = charger.session
+
+        if goal["goal_type"] == "tempo":
+            reached = goal.get("target_min") is not None and session.duration_minutes() >= goal["target_min"]
+        else:
+            reached = goal.get("target_kwh") is not None and session.energy_consumed_kwh >= goal["target_kwh"]
+        if not reached:
+            continue
+
+        cpf = goal["cpf"]
+        location = charger.location
+        result = controller.vehicle_disconnect(charger_id)
+        if isinstance(result, dict) and "error" in result:
+            continue  # já foi encerrada por outro caminho nesse meio-tempo — ignora
+
+        controller._log_event(
+            "CLIENT_GOAL_REACHED", charger_id,
+            f"Meta de {goal['goal_type']} atingida — recarga encerrada automaticamente",
+        )
+        charging_goals.pop(charger_id, None)
+        client_active_charger.pop(cpf, None)
+        last_receipt[cpf] = {
+            "vehicle_id": session.vehicle_id,
+            "charger_id": charger_id,
+            "location": location,
+            "energy_kwh": round(session.energy_consumed_kwh, 3),
+            "duration_min": round(session.duration_minutes(), 1),
+            "revenue_rs": round(session.energy_consumed_kwh * TARIFF_RS_PER_KWH, 2),
+            "completed_reason": "meta_atingida",
+        }
+
+
 # ----------------------------------------------------------------------
-# Ticker: acumula energia das sessões ativas e transmite o estado a cada 1s
+# Ticker: acumula energia das sessões ativas, checa metas e transmite o
+# estado a cada 1s
 # ----------------------------------------------------------------------
 
 async def ticker_loop() -> None:
@@ -291,6 +388,7 @@ async def ticker_loop() -> None:
         await asyncio.sleep(TICK_INTERVAL_S)
         for session in controller.active_sessions:
             session.update_energy(TICK_INTERVAL_S)
+        _check_goals_and_autodisconnect()
         if controller.active_sessions or manager.active:
             await manager.broadcast(build_payload())
 
@@ -321,12 +419,63 @@ templates.env.filters["brl"] = format_brl
 # Rotas — páginas
 # ----------------------------------------------------------------------
 
+# ----------------------------------------------------------------------
+# Dashboard de Gestão — casca de navegação (P0-10): Visão Geral (resumo
+# de alto nível) + Carregadores (grid/tabela detalhada, era o antigo "/")
+# + Clientes/Histórico/Relatórios/Configurações, todos reaproveitando o
+# estado que já existe (controller, client_store, billing_snapshot) —
+# nenhum motor de analytics novo.
+# ----------------------------------------------------------------------
+
 @app.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request):
+async def dashboard_visao_geral(request: Request):
     payload = build_payload()
     return templates.TemplateResponse(
         "dashboard_gestao.html",
-        {"request": request, "state": payload, "tariff": TARIFF_RS_PER_KWH},
+        {"request": request, "state": payload, "tariff": TARIFF_RS_PER_KWH, "active_nav": "visao"},
+    )
+
+
+@app.get("/dashboard/carregadores", response_class=HTMLResponse)
+async def dashboard_carregadores(request: Request):
+    payload = build_payload()
+    return templates.TemplateResponse(
+        "dashboard_carregadores.html",
+        {"request": request, "state": payload, "tariff": TARIFF_RS_PER_KWH, "active_nav": "carregadores"},
+    )
+
+
+@app.get("/dashboard/clientes", response_class=HTMLResponse)
+async def dashboard_clientes(request: Request):
+    return templates.TemplateResponse(
+        "dashboard_clientes.html",
+        {"request": request, "clients": dashboard_clients_payload(), "active_nav": "clientes"},
+    )
+
+
+@app.get("/dashboard/historico", response_class=HTMLResponse)
+async def dashboard_historico(request: Request):
+    sessions = completed_sessions_payload()
+    sessions.reverse()
+    return templates.TemplateResponse(
+        "dashboard_historico.html",
+        {"request": request, "sessions": sessions, "active_nav": "historico"},
+    )
+
+
+@app.get("/dashboard/relatorios", response_class=HTMLResponse)
+async def dashboard_relatorios(request: Request):
+    return templates.TemplateResponse(
+        "dashboard_relatorios.html",
+        {"request": request, "billing": billing_snapshot(), "active_nav": "relatorios"},
+    )
+
+
+@app.get("/dashboard/configuracoes", response_class=HTMLResponse)
+async def dashboard_configuracoes(request: Request):
+    return templates.TemplateResponse(
+        "dashboard_configuracoes.html",
+        {"request": request, "tariff": TARIFF_RS_PER_KWH, "payment_mode": payments.PAYMENT_MODE, "active_nav": "config"},
     )
 
 
@@ -339,10 +488,22 @@ def _current_account(request: Request) -> dict | None:
     return client_store.get_account_from_token(token)
 
 
+def _post_login_destination(cpf: str) -> str:
+    """
+    P0-4: se a conta já tem uma sessão de carregamento ativa (em
+    qualquer veículo), manda direto pro acompanhamento em tempo real em
+    vez da home — é assim que o celular do cliente "encontra" a recarga
+    que ele iniciou no totem. A navegação normal continua disponível a
+    partir de lá (não prende o cliente na tela).
+    """
+    return "/cliente/carregando" if cpf in client_active_charger else "/cliente/home"
+
+
 @app.get("/cliente/login", response_class=HTMLResponse)
 async def cliente_login_form(request: Request):
-    if _current_account(request):
-        return RedirectResponse("/cliente/home", status_code=303)
+    account = _current_account(request)
+    if account:
+        return RedirectResponse(_post_login_destination(account["cpf"]), status_code=303)
     return templates.TemplateResponse(
         "cliente/login.html",
         {"request": request, "error": None, "cpf": "", "show_forgot": False},
@@ -361,7 +522,7 @@ async def cliente_login(request: Request, cpf: str = Form(...), senha: str = For
             status_code=401,
         )
     token = client_store.start_session(account["cpf"])
-    response = RedirectResponse("/cliente/home", status_code=303)
+    response = RedirectResponse(_post_login_destination(account["cpf"]), status_code=303)
     response.set_cookie(client_store.SESSION_COOKIE, token, httponly=True, samesite="lax")
     return response
 
@@ -407,7 +568,7 @@ async def cliente_cadastro(
 
     account = client_store.create_account(nome, cpf_norm, email, senha)
     token = client_store.start_session(account["cpf"])
-    response = RedirectResponse("/cliente/home", status_code=303)
+    response = RedirectResponse(_post_login_destination(account["cpf"]), status_code=303)
     response.set_cookie(client_store.SESSION_COOKIE, token, httponly=True, samesite="lax")
     return response
 
@@ -442,80 +603,127 @@ async def cliente_home(request: Request):
     )
 
 
+def _default_carregar_form() -> dict:
+    return {
+        "placa": "", "novo_modelo": "", "novo_placa": "", "charger_id": "",
+        "modo": "tempo", "minutos": 30, "energia_kwh": 15,
+    }
+
+
+def _carregar_config_response(request: Request, form: dict, error: str | None = None, status_code: int = 200):
+    account = _current_account(request)
+    payload = build_payload()
+    free_chargers = [c for c in payload["chargers"] if c["status"] == "LIVRE"]
+    vehicles = client_store.list_vehicles(account["cpf"]) if account else []
+    return templates.TemplateResponse(
+        "cliente/carregar_config.html",
+        {"request": request, "free_chargers": free_chargers, "vehicles": vehicles, "error": error, "form": form},
+        status_code=status_code,
+    )
+
+
 @app.get("/cliente/carregar", response_class=HTMLResponse)
 async def cliente_carregar_form(request: Request, pix_erro: str | None = None):
     account = _current_account(request)
     if not account:
         return RedirectResponse("/cliente/login", status_code=303)
+    # P0-6 (ponto de entrada 1 de 2 — o outro é o guard repetido em
+    # /resumo e /pagar abaixo, defesa em profundidade): uma sessão ativa
+    # por conta, então nem mostra o formulário de nova recarga.
     if account["cpf"] in client_active_charger:
-        return RedirectResponse("/cliente/carregando", status_code=303)
+        return RedirectResponse("/cliente/carregando?aviso=ja_ativa", status_code=303)
     if account["cpf"] in pix_pending:
         return RedirectResponse("/cliente/carregar/pix", status_code=303)
 
-    error = "O pagamento via Pix não foi aprovado — tente novamente." if pix_erro else None
-    payload = build_payload()
-    free_chargers = [c for c in payload["chargers"] if c["status"] == "LIVRE"]
-    return templates.TemplateResponse(
-        "cliente/carregar_config.html",
-        {"request": request, "free_chargers": free_chargers, "error": error,
-         "form": {"placa": "", "charger_id": "", "energia_kwh": ""}},
-    )
+    if pix_erro == "timeout":
+        error = "Tempo esgotado para concluir o pagamento — tente novamente."
+    elif pix_erro:
+        error = "O pagamento via Pix não foi aprovado — tente novamente."
+    else:
+        error = None
+    return _carregar_config_response(request, _default_carregar_form(), error=error)
 
 
 @app.post("/cliente/carregar/resumo", response_class=HTMLResponse)
 async def cliente_carregar_resumo(
     request: Request,
     placa: str = Form(...),
+    novo_modelo: str = Form(""),
+    novo_placa: str = Form(""),
     charger_id: str = Form(...),
-    energia_kwh: float = Form(...),
+    modo: str = Form("tempo"),
+    minutos: float | None = Form(None),
+    energia_kwh: float | None = Form(None),
 ):
     account = _current_account(request)
     if not account:
         return RedirectResponse("/cliente/login", status_code=303)
+    if account["cpf"] in client_active_charger:
+        return RedirectResponse("/cliente/carregando?aviso=ja_ativa", status_code=303)
 
     charger_id = charger_id.upper()
-    placa = placa.strip().upper()
-    payload = build_payload()
-    free_chargers = [c for c in payload["chargers"] if c["status"] == "LIVRE"]
+    modo = modo if modo in ("tempo", "energia") else "tempo"
+    form = {
+        "placa": placa, "novo_modelo": novo_modelo, "novo_placa": novo_placa,
+        "charger_id": charger_id, "modo": modo, "minutos": minutos, "energia_kwh": energia_kwh,
+    }
 
-    if charger_id not in controller.chargers or energia_kwh <= 0 or not placa:
-        return templates.TemplateResponse(
-            "cliente/carregar_config.html",
-            {"request": request, "free_chargers": free_chargers,
-             "error": "Preencha placa, vaga e energia desejada (kWh) corretamente.",
-             "form": {"placa": placa, "charger_id": charger_id, "energia_kwh": energia_kwh}},
+    # Veículo: ou uma placa já cadastrada foi escolhida, ou o cliente está
+    # cadastrando um novo ali mesmo (P0-1) — "__novo__" é o valor sentinela
+    # da opção "+ Cadastrar novo veículo" no <select> (ver carregar_config.html).
+    existing_plates = {v["placa"] for v in client_store.list_vehicles(account["cpf"])}
+    if placa == "__novo__" or placa.strip().upper() not in existing_plates:
+        vehicle = client_store.add_vehicle(account["cpf"], novo_modelo, novo_placa)
+        if not vehicle:
+            return _carregar_config_response(
+                request, form,
+                error="Selecione um veículo já cadastrado ou informe modelo e placa do novo veículo.",
+                status_code=400,
+            )
+        placa = vehicle["placa"]
+    else:
+        placa = placa.strip().upper()
+
+    valor = minutos if modo == "tempo" else energia_kwh
+    if charger_id not in controller.chargers or not valor or valor <= 0:
+        return _carregar_config_response(
+            request, form,
+            error="Preencha vaga e meta (tempo ou energia) corretamente.",
             status_code=400,
         )
 
+    # LIMITAÇÃO CONHECIDA (documentada, não resolvida nesta rodada): entre o
+    # cliente ver a vaga como LIVRE na tela anterior e chegar aqui, outro
+    # cliente pode ter escolhido a MESMA vaga — nada reserva a vaga só por
+    # ela aparecer no formulário. Esta checagem de is_occupied pega o caso
+    # comum, mas ainda existe uma janela de corrida teórica entre dois
+    # clientes validando a mesma vaga livre quase ao mesmo tempo (round-trip
+    # de rede entre as duas telas). Numa demo single-process o risco é
+    # mínimo; resolver de verdade exigiria uma "reserva" da vaga no momento
+    # da escolha, não só na confirmação — fica para uma rodada futura.
     if controller.chargers[charger_id].is_occupied:
-        return templates.TemplateResponse(
-            "cliente/carregar_config.html",
-            {"request": request, "free_chargers": free_chargers,
-             "error": f"A vaga {charger_id} acabou de ficar ocupada — escolha outra.",
-             "form": {"placa": placa, "charger_id": "", "energia_kwh": energia_kwh}},
+        form["placa"], form["charger_id"] = placa, ""
+        return _carregar_config_response(
+            request, form,
+            error=f"A vaga {charger_id} acabou de ficar ocupada — escolha outra.",
             status_code=409,
         )
 
+    payload = build_payload()
     charger_info = next(c for c in payload["chargers"] if c["id"] == charger_id)
-    estimate = estimate_charge(charger_id, energia_kwh)
+    estimate = estimate_charge(charger_id, modo, valor)
     return templates.TemplateResponse(
         "cliente/carregar_resumo.html",
         {"request": request, "placa": placa, "charger": charger_info,
-         "energia_kwh": energia_kwh, "estimate": estimate, "site": SITE_NAME,
+         "modo": modo, "valor": valor, "estimate": estimate, "site": SITE_NAME,
          "payment_mode": payments.PAYMENT_MODE},
     )
 
 
-def _reject_carregar(request: Request, placa: str, energia_kwh: float, message: str, status_code: int = 409):
-    payload = build_payload()
-    free_chargers = [c for c in payload["chargers"] if c["status"] == "LIVRE"]
-    return templates.TemplateResponse(
-        "cliente/carregar_config.html",
-        {"request": request, "free_chargers": free_chargers,
-         "error": message,
-         "form": {"placa": placa, "charger_id": "", "energia_kwh": energia_kwh}},
-        status_code=status_code,
-    )
+def _reject_carregar(request: Request, placa: str, message: str, status_code: int = 409):
+    form = _default_carregar_form()
+    form["placa"] = placa
+    return _carregar_config_response(request, form, error=message, status_code=status_code)
 
 
 @app.post("/cliente/carregar/pagar", response_class=HTMLResponse)
@@ -523,15 +731,24 @@ async def cliente_carregar_pagar(
     request: Request,
     placa: str = Form(...),
     charger_id: str = Form(...),
-    energia_kwh: float = Form(...),
+    modo: str = Form(...),
+    valor: float = Form(...),
     metodo_pagamento: str = Form(...),
 ):
     account = _current_account(request)
     if not account:
         return RedirectResponse("/cliente/login", status_code=303)
+    if account["cpf"] in client_active_charger:
+        return RedirectResponse("/cliente/carregando?aviso=ja_ativa", status_code=303)
 
     charger_id = charger_id.upper()
     placa = placa.strip().upper()
+    modo = modo if modo in ("tempo", "energia") else "tempo"
+    goal_fields = {
+        "goal_type": modo,
+        "target_min": valor if modo == "tempo" else None,
+        "target_kwh": valor if modo == "energia" else None,
+    }
 
     if payments.PAYMENT_MODE == "mock":
         # Modo de contingência (ver .env / CLAUDE.md): comportamento antigo,
@@ -540,9 +757,9 @@ async def cliente_carregar_pagar(
         # de rede na sala, trocando só PAYMENT_MODE=mock e reiniciando.
         result = controller.vehicle_connect(charger_id, placa)
         if isinstance(result, dict) and "error" in result:
-            return _reject_carregar(request, placa, energia_kwh, f"Não foi possível iniciar a recarga: {result['error']}")
+            return _reject_carregar(request, placa, f"Não foi possível iniciar a recarga: {result['error']}")
 
-        charging_goals[charger_id] = {"target_kwh": energia_kwh, "cpf": account["cpf"]}
+        charging_goals[charger_id] = {**goal_fields, "cpf": account["cpf"]}
         client_active_charger[account["cpf"]] = charger_id
         client_store.register_vehicle(account["cpf"], placa)
         controller._log_event(
@@ -550,21 +767,35 @@ async def cliente_carregar_pagar(
             f"[MOCK] Pagamento ({metodo_pagamento}) aprovado — recarga iniciada pelo cliente {account['nome']}",
         )
         await manager.broadcast(build_payload())
-        return RedirectResponse("/cliente/carregando", status_code=303)
+        # P0-3: o totem não acompanha mais a recarga — só confirma e some
+        # sozinho (ver /cliente/carregar/iniciada). O acompanhamento em
+        # tempo real (/cliente/carregando) passa a ser alcançado por login.
+        return RedirectResponse("/cliente/carregar/iniciada", status_code=303)
 
     # PAYMENT_MODE == "mercadopago": gera uma cobrança Pix real (sandbox) e
     # manda o cliente pra tela de QR. vehicle_connect() só acontece quando
     # o status vier aprovado — ver GET /cliente/carregar/pix/status (polling).
+    #
+    # LIMITAÇÃO CONHECIDA (mesma da /resumo, ver comentário lá): a vaga só é
+    # revalidada aqui, no momento de gerar o Pix — ainda existe uma janela
+    # teórica entre isso e o cliente ter chegado nesta tela em que outro
+    # cliente poderia ter escolhido a mesma vaga. Não resolvido nesta rodada.
     if charger_id not in controller.chargers or controller.chargers[charger_id].is_occupied:
-        return _reject_carregar(request, placa, energia_kwh, f"A vaga {charger_id} não está mais disponível — escolha outra.")
+        return _reject_carregar(request, placa, f"A vaga {charger_id} não está mais disponível — escolha outra.")
 
-    estimate = estimate_charge(charger_id, energia_kwh)
+    estimate = estimate_charge(charger_id, modo, valor)
+    if estimate["estimated_cost_rs"] is None:
+        # Rede sem folga alguma agora (0 kW disponíveis) — não dá pra cobrar
+        # um valor que nem foi possível estimar. Evita crashar create_pix_charge()
+        # tentando formatar None como número.
+        return _reject_carregar(request, placa, "Sem potência disponível na rede agora para estimar o valor — tente novamente em instantes.")
+
     external_reference = f"chargegrid-{charger_id}-{account['cpf']}-{int(datetime.now().timestamp())}"
 
     try:
         charge = payments.create_pix_charge(
             valor_rs=estimate["estimated_cost_rs"],
-            descricao=f"ChargeGrid - recarga {energia_kwh:.1f} kWh em {charger_id}",
+            descricao=f"ChargeGrid - recarga ({modo}) em {charger_id}",
             external_reference=external_reference,
         )
     except Exception as exc:
@@ -573,7 +804,7 @@ async def cliente_carregar_pagar(
         return templates.TemplateResponse(
             "cliente/carregar_resumo.html",
             {"request": request, "placa": placa, "charger": charger_info,
-             "energia_kwh": energia_kwh, "estimate": estimate, "site": SITE_NAME,
+             "modo": modo, "valor": valor, "estimate": estimate, "site": SITE_NAME,
              "payment_mode": payments.PAYMENT_MODE,
              "error": f"Não foi possível gerar o Pix agora: {exc}"},
             status_code=502,
@@ -582,17 +813,22 @@ async def cliente_carregar_pagar(
     pix_pending[account["cpf"]] = {
         "charger_id": charger_id,
         "placa": placa,
-        "energia_kwh": energia_kwh,
+        **goal_fields,
         "order_id": charge["order_id"],
         "qr_code": charge["qr_code"],
         "qr_code_base64": charge["qr_code_base64"],
         "valor_rs": estimate["estimated_cost_rs"],
+        "created_at": datetime.now(),  # P0-8: base do timeout de ~5 min do totem
     }
     controller._log_event(
         "CLIENT_PIX_CREATED", charger_id,
         f"[MERCADOPAGO] Pix de {format_brl(estimate['estimated_cost_rs'])} gerado para {account['nome']} — aguardando pagamento",
     )
     return RedirectResponse("/cliente/carregar/pix", status_code=303)
+
+
+def _pix_expired(pending: dict) -> bool:
+    return (datetime.now() - pending["created_at"]).total_seconds() > PIX_TIMEOUT_S
 
 
 @app.get("/cliente/carregar/pix", response_class=HTMLResponse)
@@ -603,6 +839,15 @@ async def cliente_carregar_pix(request: Request):
     pending = pix_pending.get(account["cpf"])
     if not pending:
         return RedirectResponse("/cliente/home", status_code=303)
+    if _pix_expired(pending):
+        # P0-8: cliente recarregou a tela depois do prazo sem o polling ter
+        # rodado — mesmo tratamento do timeout detectado em /pix/status.
+        pix_pending.pop(account["cpf"], None)
+        controller._log_event(
+            "CLIENT_PIX_TIMEOUT", pending["charger_id"],
+            f"[MERCADOPAGO] Pix expirou sem confirmação (~{PIX_TIMEOUT_S // 60} min) para {account['nome']}",
+        )
+        return RedirectResponse("/cliente/carregar?pix_erro=timeout", status_code=303)
     return templates.TemplateResponse(
         "cliente/carregar_pix.html",
         {"request": request, "pending": pending, "site": SITE_NAME},
@@ -629,6 +874,19 @@ async def cliente_carregar_pix_status(request: Request):
         # Resolvido em outra aba, ou expirou — manda pra home.
         response = HTMLResponse("")
         response.headers["HX-Redirect"] = "/cliente/home"
+        return response
+
+    if _pix_expired(pending):
+        # P0-8: totem (ou qualquer dispositivo) volta sozinho pro início se
+        # o Pix não confirmar em ~5 min — não cancela nada do lado do
+        # Mercado Pago, só desiste de esperar por aqui.
+        pix_pending.pop(account["cpf"], None)
+        controller._log_event(
+            "CLIENT_PIX_TIMEOUT", pending["charger_id"],
+            f"[MERCADOPAGO] Pix expirou sem confirmação (~{PIX_TIMEOUT_S // 60} min) para {account['nome']}",
+        )
+        response = HTMLResponse("")
+        response.headers["HX-Redirect"] = "/cliente/carregar?pix_erro=timeout"
         return response
 
     try:
@@ -683,7 +941,10 @@ async def cliente_carregar_pix_status(request: Request):
         response.headers["HX-Redirect"] = "/cliente/home"
         return response
 
-    charging_goals[charger_id] = {"target_kwh": pending["energia_kwh"], "cpf": account["cpf"]}
+    charging_goals[charger_id] = {
+        "goal_type": pending["goal_type"], "target_min": pending["target_min"],
+        "target_kwh": pending["target_kwh"], "cpf": account["cpf"],
+    }
     client_active_charger[account["cpf"]] = charger_id
     client_store.register_vehicle(account["cpf"], pending["placa"])
     controller._log_event(
@@ -692,13 +953,39 @@ async def cliente_carregar_pix_status(request: Request):
     )
     await manager.broadcast(build_payload())
 
+    # P0-3: mesmo destino do modo mock — confirmação curta, não mais a tela
+    # de acompanhamento (ver /cliente/carregar/iniciada).
     response = HTMLResponse("")
-    response.headers["HX-Redirect"] = "/cliente/carregando"
+    response.headers["HX-Redirect"] = "/cliente/carregar/iniciada"
     return response
 
 
+@app.get("/cliente/carregar/iniciada", response_class=HTMLResponse)
+async def cliente_carregar_iniciada(request: Request):
+    """
+    P0-3: tela de confirmação curta do totem — substitui a antiga tela de
+    'carregamento em andamento' que ficava presa na conta do cliente num
+    dispositivo compartilhado. Faz logout automático (ver app.js
+    `scheduleAutoLogout`) e volta pro login sozinha; o acompanhamento de
+    verdade agora vive em /cliente/carregando, alcançado por login (P0-4).
+    """
+    account = _current_account(request)
+    if not account:
+        return RedirectResponse("/cliente/login", status_code=303)
+    charger_id = client_active_charger.get(account["cpf"])
+    if not charger_id:
+        return RedirectResponse("/cliente/home", status_code=303)
+    charger = controller.chargers.get(charger_id)
+    placa = charger.session.vehicle_id if charger and charger.session else "—"
+    location = charger.location if charger else charger_id
+    return templates.TemplateResponse(
+        "cliente/carregar_iniciada.html",
+        {"request": request, "charger_id": charger_id, "location": location, "placa": placa},
+    )
+
+
 @app.get("/cliente/carregando", response_class=HTMLResponse)
-async def cliente_carregando(request: Request):
+async def cliente_carregando(request: Request, aviso: str | None = None):
     account = _current_account(request)
     if not account:
         return RedirectResponse("/cliente/login", status_code=303)
@@ -718,11 +1005,12 @@ async def cliente_carregando(request: Request):
         charging_goals.pop(charger_id, None)
         return RedirectResponse("/cliente/home", status_code=303)
 
-    target_kwh = charging_goals.get(charger_id, {}).get("target_kwh", 0.0)
+    goal = charging_goals.get(charger_id, {"goal_type": "energia", "target_kwh": 0.0, "target_min": None})
+    aviso_msg = "Você já tem uma recarga em andamento." if aviso == "ja_ativa" else None
     return templates.TemplateResponse(
         "cliente/carregando.html",
         {"request": request, "charger": charger_state, "tariff": TARIFF_RS_PER_KWH,
-         "site": SITE_NAME, "target_kwh": target_kwh},
+         "site": SITE_NAME, "goal": goal, "aviso": aviso_msg},
     )
 
 
@@ -734,6 +1022,12 @@ async def cliente_carregando_encerrar(request: Request):
 
     charger_id = client_active_charger.get(account["cpf"])
     if not charger_id:
+        # P0-5 (idempotência): a meta pode ter sido atingida e encerrada
+        # sozinha pelo ticker (_check_goals_and_autodisconnect) bem antes
+        # deste clique chegar — o recibo já existe, então manda pra ele em
+        # vez de tratar como erro / clique perdido.
+        if account["cpf"] in last_receipt:
+            return RedirectResponse("/cliente/carregando/concluido", status_code=303)
         return RedirectResponse("/cliente/home", status_code=303)
 
     charger = controller.chargers[charger_id]
@@ -755,6 +1049,7 @@ async def cliente_carregando_encerrar(request: Request):
             "energy_kwh": round(session.energy_consumed_kwh, 3),
             "duration_min": round(session.duration_minutes(), 1),
             "revenue_rs": round(session.energy_consumed_kwh * TARIFF_RS_PER_KWH, 2),
+            "completed_reason": "manual",
         }
 
     return RedirectResponse("/cliente/carregando/concluido", status_code=303)
@@ -795,13 +1090,14 @@ async def cliente_historico(request: Request):
 # ----------------------------------------------------------------------
 
 @app.post("/estimate")
-async def estimate(charger_id: str = Form(...), target_kwh: float = Form(...)):
+async def estimate(charger_id: str = Form(...), modo: str = Form("energia"), valor: float = Form(...)):
     charger_id = charger_id.upper()
+    modo = modo if modo in ("tempo", "energia") else "energia"
     if charger_id not in controller.chargers:
         raise HTTPException(status_code=404, detail="Carregador não encontrado.")
-    if target_kwh <= 0:
-        raise HTTPException(status_code=400, detail="Energia desejada deve ser maior que zero.")
-    return JSONResponse(estimate_charge(charger_id, target_kwh))
+    if valor <= 0:
+        raise HTTPException(status_code=400, detail="Valor da meta deve ser maior que zero.")
+    return JSONResponse(estimate_charge(charger_id, modo, valor))
 
 
 # ----------------------------------------------------------------------

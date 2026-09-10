@@ -20,11 +20,19 @@
     <div class="summary-list">
       <div class="row"><span>Veículo</span><span class="val">{{ placa }}</span></div>
       <div class="row"><span>Vaga</span><span class="val">{{ charger.id }} — {{ charger.location }}</span></div>
-      <div class="row"><span>Energia desejada</span><span class="val">{{ '%.1f'|format(energia_kwh) }} kWh</span></div>
-      <div class="row"><span>Tempo estimado</span><span class="val">
-        {% if estimate.estimated_time_min is not none %}~{{ '%.0f'|format(estimate.estimated_time_min) }} min{% else %}indisponível agora{% endif %}
+      <div class="row"><span>Meta</span><span class="val">
+        {% if modo == "tempo" %}{{ '%.0f'|format(valor) }} min{% else %}{{ '%.1f'|format(valor) }} kWh{% endif %}
       </span></div>
-      <div class="row"><span>Valor estimado</span><span class="val">{{ estimate.estimated_cost_rs|brl }}</span></div>
+      <div class="row"><span>{{ "Energia estimada" if modo == "tempo" else "Tempo estimado" }}</span><span class="val">
+        {% if modo == "tempo" %}
+          {% if estimate.target_kwh is not none %}~{{ '%.1f'|format(estimate.target_kwh) }} kWh{% else %}indisponível agora{% endif %}
+        {% else %}
+          {% if estimate.estimated_time_min is not none %}~{{ '%.0f'|format(estimate.estimated_time_min) }} min{% else %}indisponível agora{% endif %}
+        {% endif %}
+      </span></div>
+      <div class="row"><span>Valor estimado</span><span class="val">
+        {% if estimate.estimated_cost_rs is not none %}{{ estimate.estimated_cost_rs|brl }}{% else %}indisponível agora{% endif %}
+      </span></div>
     </div>
 
     <div class="banner-info">
@@ -36,7 +44,8 @@
     <form method="post" action="/cliente/carregar/pagar" class="wizard-form">
       <input type="hidden" name="placa" value="{{ placa }}">
       <input type="hidden" name="charger_id" value="{{ charger.id }}">
-      <input type="hidden" name="energia_kwh" value="{{ energia_kwh }}">
+      <input type="hidden" name="modo" value="{{ modo }}">
+      <input type="hidden" name="valor" value="{{ valor }}">
 
       <div class="form-field">
         <label>Forma de pagamento</label>

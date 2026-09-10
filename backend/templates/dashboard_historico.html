@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChargeGrid Intelligence — Histórico</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://unpkg.com/htmx.org@1.9.12"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="dashboard" hx-headers='{}'>
+
+  <header class="dash-header">
+    <div class="brand">
+      <h1>⚡ ChargeGrid Intelligence</h1>
+    </div>
+  </header>
+
+  {% include "partials/dash_nav.html" %}
+
+  <section class="panel" aria-labelledby="h-historico">
+    <h2 id="h-historico"><i data-lucide="history" class="panel-icon" aria-hidden="true"></i>Sessões concluídas</h2>
+    {% if sessions %}
+    <div style="overflow-x:auto;">
+      <table class="table-simple">
+        <thead>
+          <tr><th>Início</th><th>Veículo</th><th>Vaga</th><th>Energia</th><th>Duração</th><th>Valor</th></tr>
+        </thead>
+        <tbody>
+          {% for s in sessions %}
+          <tr>
+            <td>{{ s.started_at[11:19] }}</td>
+            <td>{{ s.vehicle_id }}</td>
+            <td>{{ s.charger_id }}</td>
+            <td>{{ '%.3f'|format(s.energy_kwh) }} kWh</td>
+            <td>{{ '%.1f'|format(s.duration_min) }} min</td>
+            <td>{{ s.revenue_rs|brl }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state">Nenhuma recarga concluída ainda.</div>
+    {% endif %}
+  </section>
+
+  {% include "partials/chat_widget.html" %}
+
+  <script src="/static/app.js"></script>
+  <script>ChargeGrid.init({ page: "dashboard" });</script>
+</body>
+</html>

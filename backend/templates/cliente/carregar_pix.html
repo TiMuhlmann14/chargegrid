@@ -19,6 +19,9 @@
     <div class="summary-list">
       <div class="row"><span>Vaga</span><span class="val">{{ pending.charger_id }}</span></div>
       <div class="row"><span>Veículo</span><span class="val">{{ pending.placa }}</span></div>
+      <div class="row"><span>Meta</span><span class="val">
+        {% if pending.goal_type == "tempo" %}{{ '%.0f'|format(pending.target_min) }} min{% else %}{{ '%.1f'|format(pending.target_kwh) }} kWh{% endif %}
+      </span></div>
       <div class="row"><span>Valor</span><span class="val">{{ pending.valor_rs|brl }}</span></div>
     </div>
 
