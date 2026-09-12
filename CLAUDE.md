@@ -24,7 +24,55 @@
 
 ---
 
-## Estado atual (última atualização: 2026-09-10)
+## Estado atual (última atualização: 2026-09-11)
+
+### Integração Modbus simulada — chamadas ligadas em main.py (2026-09-11)
+
+Pendência antiga fechada: `backend/core/modbus_map.py` (+ `__init__.py`)
+já estava no lugar e `controller._write_power_to_hardware()` já existia
+pronto em `demand_controller.py` (INTOCÁVEL) desde antes, mas **nunca
+era chamado por ninguém** — por isso `MODBUS_WRITE_SIMULATED` nunca
+aparecia no console de eventos, mesmo com o mapa de registradores
+disponível (`MODBUS_MAP_AVAILABLE = True`).
+
+**Verificado primeiro, antes de mexer:** `grep` por
+`_write_power_to_hardware` em todo o projeto só encontrava a própria
+definição do método — nenhuma sessão anterior tinha ligado a chamada.
+
+**Mudança feita (só em `main.py`, nada em `demand_controller.py`):**
+nova função `_sync_hardware_writes()` (logo após `build_payload()`) que
+percorre `controller.active_sessions` inteiro e chama
+`controller._write_power_to_hardware(session.charger_id,
+session.allocated_kw)` para cada sessão ativa — não só para o
+carregador que acabou de conectar/desconectar, porque
+`vehicle_connect()`/`vehicle_disconnect()` redistribuem
+`allocated_kw` entre TODAS as sessões ativas de uma vez (ex.: conectar
+um segundo carregador rebaixa o `allocated_kw` do primeiro também).
+Chamada adicionada logo após todo `vehicle_connect()`/
+`vehicle_disconnect()` bem-sucedido (guardada por `if not
+(isinstance(result, dict) and "error" in result)` nos pontos onde o
+resultado só é checado depois) em **6 pontos**: `_check_goals_and_
+autodisconnect()` (ticker), `/cliente/carregar/pagar` (modo mock),
+`/cliente/carregar/pix/status` (Pix aprovado), `/cliente/carregando/
+encerrar` (encerrar manual do cliente), e `POST /connect`/`POST
+/disconnect` (ações do operador no Dashboard).
+
+**Testado nesta sessão** (`PAYMENT_MODE=mock`, servidor à parte na
+porta 8123, via curl — sem alterar `.env`/processo real): (1) cadastro
+→ resumo → pagar num carregador livre → console do Dashboard
+(`/dashboard/carregadores`) mostra `VEHICLE_CONNECTED` →
+`POWER_REDISTRIBUTED` → `MODBUS_WRITE_SIMULATED · CG-05 — [SIMULADO]
+Reg 10029 ← 220 (22.0 kW)` → `CLIENT_PAYMENT_APPROVED`, nessa ordem;
+(2) encerrar a recarga (`/cliente/carregando/encerrar`) gera
+`VEHICLE_DISCONNECTED`, sem nenhuma escrita Modbus sobrando (não há
+mais sessão ativa pra escrever, como esperado); (3) conectar dois
+carregadores em sequência via `POST /connect` (ação de operador) gera
+DOIS eventos `MODBUS_WRITE_SIMULATED` (um por carregador ativo) a cada
+conexão nova — confirma que a redistribuição volta a escrever em todos
+os carregadores ativos, não só no que acabou de mudar.
+
+Nenhuma mudança em `backend/demand_controller.py` nem em
+`backend/core/modbus_map.py` — só a ligação em `main.py`.
 
 ### Investigação: QR do PAGAMENTO Pix não aparece (não é regressão do P1)
 

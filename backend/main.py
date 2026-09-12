@@ -292,6 +292,23 @@ def build_payload() -> dict:
     return state
 
 
+def _sync_hardware_writes() -> None:
+    """
+    Integração Modbus (Sprint 3+, simulada): espelha a redistribuição de
+    potência do DemandController pro hardware físico de cada carregador
+    ativo, chamando o método pronto `controller._write_power_to_hardware()`
+    (demand_controller.py — INTOCÁVEL, não mexer nele).
+
+    Chamar logo após qualquer vehicle_connect()/vehicle_disconnect() bem-
+    sucedido, já que ambos redistribuem `allocated_kw` entre TODAS as
+    sessões ativas (não só a que acabou de conectar/desconectar) — por
+    isso o loop percorre `controller.active_sessions` inteiro a cada vez,
+    em vez de escrever só no carregador da chamada que disparou isto.
+    """
+    for session in controller.active_sessions:
+        controller._write_power_to_hardware(session.charger_id, session.allocated_kw)
+
+
 def random_plate() -> str:
     letters = lambda n: "".join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ", k=n))
     return f"{letters(3)}-{random.randint(0,9)}{random.choice('ABCDEFGHJKLMNPQRSTUVWXYZ')}{random.randint(10,99)}"
@@ -410,6 +427,7 @@ def _check_goals_and_autodisconnect() -> None:
         result = controller.vehicle_disconnect(charger_id)
         if isinstance(result, dict) and "error" in result:
             continue  # já foi encerrada por outro caminho nesse meio-tempo — ignora
+        _sync_hardware_writes()
 
         controller._log_event(
             "CLIENT_GOAL_REACHED", charger_id,
@@ -808,6 +826,7 @@ async def cliente_carregar_pagar(
         result = controller.vehicle_connect(charger_id, placa)
         if isinstance(result, dict) and "error" in result:
             return _reject_carregar(request, placa, f"Não foi possível iniciar a recarga: {result['error']}")
+        _sync_hardware_writes()
 
         charging_goals[charger_id] = {**goal_fields, "cpf": account["cpf"]}
         client_active_charger[account["cpf"]] = charger_id
@@ -991,6 +1010,7 @@ async def cliente_carregar_pix_status(request: Request):
         response.headers["HX-Redirect"] = "/cliente/home"
         return response
 
+    _sync_hardware_writes()
     charging_goals[charger_id] = {
         "goal_type": pending["goal_type"], "target_min": pending["target_min"],
         "target_kwh": pending["target_kwh"], "cpf": account["cpf"],
@@ -1114,6 +1134,8 @@ async def cliente_carregando_encerrar(request: Request):
     location = charger.location
 
     result = controller.vehicle_disconnect(charger_id)
+    if not (isinstance(result, dict) and "error" in result):
+        _sync_hardware_writes()
     await manager.broadcast(build_payload())
 
     charging_goals.pop(charger_id, None)
@@ -1263,6 +1285,8 @@ async def connect(charger_id: str = Form(...), vehicle_id: str | None = Form(Non
         raise HTTPException(status_code=404, detail="Carregador não encontrado.")
     plate = (vehicle_id or "").strip() or random_plate()
     result = controller.vehicle_connect(charger_id, plate)
+    if not (isinstance(result, dict) and "error" in result):
+        _sync_hardware_writes()
     await manager.broadcast(build_payload())
     if isinstance(result, dict) and "error" in result:
         raise HTTPException(status_code=409, detail=result["error"])
@@ -1275,6 +1299,8 @@ async def disconnect(charger_id: str = Form(...)):
     if charger_id not in controller.chargers:
         raise HTTPException(status_code=404, detail="Carregador não encontrado.")
     result = controller.vehicle_disconnect(charger_id)
+    if not (isinstance(result, dict) and "error" in result):
+        _sync_hardware_writes()
     await manager.broadcast(build_payload())
     if isinstance(result, dict) and "error" in result:
         raise HTTPException(status_code=409, detail=result["error"])
